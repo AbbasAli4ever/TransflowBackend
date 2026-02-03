@@ -116,7 +116,7 @@ Fields:
 
 Constraints:
 
-- UNIQUE (tenant_id, email)
+- UNIQUE (email) — global across all tenants
 
 ### B) Master Data
 

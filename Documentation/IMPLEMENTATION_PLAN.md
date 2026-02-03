@@ -338,7 +338,7 @@ model User {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
 
-  @@unique([tenantId, email])
+  @@unique([email]) // global unique across all tenants
   @@index([tenantId])
   @@map("users")
 }
@@ -946,7 +946,7 @@ model Tenant {
 model User {
   // Fields as specified
   // Relation to Tenant with onDelete: Restrict
-  // Unique constraint on (tenantId, email)
+  // Unique constraint on email (globally unique across all tenants)
   // Index on tenantId
 }
 
@@ -1494,12 +1494,13 @@ describe('Database Constraints', () => {
       });
     });
 
-    it('should enforce unique email per tenant', async () => {
-      const tenant = await createTestTenant();
+    it('should enforce globally unique email', async () => {
+      const tenant1 = await createTestTenant();
+      const tenant2 = await createTestTenant();
 
       await prisma.user.create({
         data: {
-          tenantId: tenant.id,
+          tenantId: tenant1.id,
           fullName: 'User 1',
           email: 'user@example.com',
           passwordHash: 'hash',
@@ -1509,9 +1510,9 @@ describe('Database Constraints', () => {
       await expect(
         prisma.user.create({
           data: {
-            tenantId: tenant.id,
+            tenantId: tenant2.id,
             fullName: 'User 2',
-            email: 'user@example.com', // Duplicate
+            email: 'user@example.com', // Duplicate email globally
             passwordHash: 'hash',
           },
         })
