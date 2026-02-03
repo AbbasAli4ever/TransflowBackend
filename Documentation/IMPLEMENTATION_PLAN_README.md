@@ -1,5 +1,12 @@
 # Finance System Backend - Complete Implementation Plan
 
+## Quick Start for AI Agents
+
+**Before doing any work, read these files in order:**
+1. `/AGENTS.md` - Operational guide, current status, and context
+2. `.claude/CLAUDE.md` - Agent behavior rules
+3. This file - Phase overview and navigation
+
 ## Overview
 
 This directory contains the **most detailed, comprehensive backend implementation plan** for an accounting-focused finance system. Every edge case, constraint, validation rule, and business logic requirement is explicitly documented.
@@ -288,6 +295,7 @@ The Notion workspace contains the authoritative business rules, data model, and 
 - Constraints & Indexes
 
 ### Local Documentation
+- `/AGENTS.md` - **AI Agent operational guide and context**
 - `Documentation/docs/` - Additional specifications
 - `prisma/schema.prisma` - Database schema
 - `README.md` - Project setup
