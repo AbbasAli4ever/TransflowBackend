@@ -1,62 +1,14 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { PrismaClient, Prisma } from '@prisma/client';
-import { getContext } from '../common/request-context';
+import { PrismaClient } from '@prisma/client';
 
-const TENANT_SCOPED_MODELS = new Set<Prisma.ModelName>([
-  'User',
-  'Supplier',
-  'Customer',
-  'Product',
-  'PaymentAccount',
-  'Transaction',
-  'TransactionLine',
-  'InventoryMovement',
-  'LedgerEntry',
-  'PaymentEntry',
-  'Allocation',
-  'ImportBatch',
-  'ImportRow',
-]);
-
-function shouldScopeTenant(model?: Prisma.ModelName) {
-  return model ? TENANT_SCOPED_MODELS.has(model) : false;
-}
+// NOTE: Prisma v5+ removed $use middleware. Tenant scoping is enforced at:
+//   1. HTTP layer — TenantScopeGuard validates JWT tenantId on every request
+//   2. Service layer — each service method must include tenantId in WHERE clauses
+// Phase 2: consider Prisma Client Extensions ($extends) for query-level auto-scoping.
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   async onModuleInit() {
-    const prismaAny = this as any;
-    prismaAny.$use(async (params: any, next: (params: any) => Promise<any>) => {
-      if (!params.model || !shouldScopeTenant(params.model)) {
-        return next(params);
-      }
-
-      const tenantId = getContext()?.tenantId;
-      if (!tenantId) {
-        return next(params);
-      }
-
-      params.args = params.args ?? {};
-
-      if (params.action === 'findMany' || params.action === 'findFirst') {
-        params.args.where = { ...(params.args.where ?? {}), tenantId };
-      }
-
-      if (params.action === 'updateMany' || params.action === 'deleteMany') {
-        params.args.where = { ...(params.args.where ?? {}), tenantId };
-      }
-
-      if (params.action === 'update' || params.action === 'delete') {
-        params.args.where = { ...(params.args.where ?? {}), tenantId };
-      }
-
-      if (params.action === 'create') {
-        params.args.data = { ...(params.args.data ?? {}), tenantId };
-      }
-
-      return next(params);
-    });
-
     await this.$connect();
   }
 

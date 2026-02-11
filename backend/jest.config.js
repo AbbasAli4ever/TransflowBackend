@@ -4,6 +4,7 @@ module.exports = {
   moduleFileExtensions: ['js', 'json', 'ts'],
   rootDir: '.',
   testRegex: '.*\\.spec\\.ts$',
+  maxWorkers: 1, // Integration tests share a single DB — serialize to prevent FK conflicts
   transform: {
     '^.+\\.(t|j)s$': 'ts-jest',
   },

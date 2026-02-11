@@ -4,11 +4,10 @@ import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { AppModule } from './app.module';
-import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
-import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { buildValidationPipe } from './common/pipes/validation.pipe';
 import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
@@ -40,7 +39,18 @@ async function bootstrap() {
 
   app.useGlobalPipes(buildValidationPipe());
 
-  app.useGlobalInterceptors(new LoggingInterceptor(), new TransformInterceptor());
+// Swagger UI — development only
+  if (process.env.NODE_ENV !== 'production') {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Persona Finance API')
+      .setDescription('Multi-tenant finance system — Phase 1: Authentication & Tenant Management')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   const port = config.get<number>('app.port') ?? 3000;
   await app.listen(port);

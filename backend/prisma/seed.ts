@@ -4,6 +4,13 @@ import { hash } from 'bcrypt';
 const prisma = new PrismaClient();
 
 async function seed() {
+  // Idempotent: skip if already seeded
+  const existing = await prisma.user.findUnique({ where: { email: 'owner@test.com' } });
+  if (existing) {
+    console.log('Already seeded — skipping (owner@test.com exists)');
+    return;
+  }
+
   const tenant = await prisma.tenant.create({
     data: {
       name: 'Test Wholesale Business',
