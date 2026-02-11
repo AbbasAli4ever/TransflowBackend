@@ -9,7 +9,7 @@
 | Item | Location |
 |------|----------|
 | Current Phase | **Phase 1** (Complete) |
-| Next Phase | **Phase 4**: Posting Engine Core |
+| Next Phase | **Phase 5**: Payments + Allocations |
 | Implementation Plans | `Documentation/IMPLEMENTATION_PLAN*.md` |
 | Domain Specs | `Documentation/docs/` |
 | Backend Code | `backend/` |
@@ -46,8 +46,8 @@ Transaction (Event) → Posting Engine → Truth Tables (Entries)
 | 1 | Backend Foundation | ✅ Complete | NestJS, Auth, Prisma, Health checks |
 | 2 | Schema V1 + Constraints | ✅ Complete | 14 tables, FKs, indexes, seeds |
 | 3 | Master Data APIs | ✅ Complete | Suppliers, Customers, Products, Accounts CRUD |
-| 4 | Posting Engine Core | 📋 Planned | PURCHASE, SALE posting with entries |
-| 5 | Payments + Allocations | 📋 Planned | Standalone payments, allocation system |
+| 4 | Posting Engine Core | ✅ Complete | PURCHASE, SALE posting with entries |
+| 5 | Payments + Allocations | ⏳ Next | Standalone payments, allocation system |
 | 6 | Returns + Transfers | 📋 Planned | Returns with strict rules, internal transfers |
 | 7 | Queries + Hardening | 📋 Planned | Dashboards, imports, production prep |
 
@@ -400,20 +400,58 @@ backend/
         └── suppliers.service.spec.ts
 ```
 
-### Phase 2: Next Up ⏳
+### Phase 4: Complete ✅
 
-**To Deliver**:
-- [ ] Complete schema (14 tables)
-- [ ] All foreign keys and constraints
-- [ ] All indexes for performance
-- [ ] Seed scripts for testing
-- [ ] Migration tested and documented
+**Delivered**:
+- [x] **Core Posting Engine:** Implemented logic for atomic and idempotent posting of `PURCHASE` and `SALE` transactions.
+- [x] **New `Transactions` Module:** Contains `transactions.controller.ts`, `transactions.service.ts` for draft management and read operations, and `posting.service.ts` for all core posting logic.
+- [x] **Transaction DTOs:** Implemented DTOs for purchase/sale lines, draft creation, transaction posting, and listing queries.
+- [x] **Balance & Stock Endpoints:** Extended `Products`, `Suppliers`, `Customers`, and `PaymentAccounts` modules with new endpoints for real-time stock and balance calculations using raw SQL queries.
+- [x] **Comprehensive Testing:** Added numerous unit and integration tests covering draft creation, purchase/sale posting, idempotency, concurrency, validation, and all new balance/stock query endpoints. Total tests: 247 passing.
+- [x] **Idempotency & Concurrency Control:** Posting logic uses `Serializable` transactions and `idempotencyKey` to ensure data integrity under concurrent operations.
 
-**Key Decisions Already Made**:
-- Email is globally unique (not per-tenant)
-- `created_by` FKs use `onDelete: SetNull`
-- Money stored as integers (PKR)
-- Weighted average costing for V1
+**Files Created/Modified**:
+```
+backend/
+├── src/
+│   ├── app.module.ts                                 # TransactionsModule added
+│   ├── customers/
+│   │   ├── customers.controller.ts                   # getBalance endpoint added
+│   │   └── customers.service.ts                      # getBalance method added
+│   ├── payment-accounts/
+│   │   ├── payment-accounts.controller.ts            # getBalance endpoint added
+│   │   └── payment-accounts.service.ts               # getBalance method added
+│   ├── products/
+│   │   ├── products.controller.ts                    # getStock endpoint added
+│   │   └── products.service.ts                       # getStock method added
+│   ├── suppliers/
+│   │   ├── suppliers.controller.ts                   # getBalance endpoint added
+│   │   └── suppliers.service.ts                      # getBalance method added
+│   └── transactions/                                 # New module for Phase 4
+│       ├── dto/                                      # Transaction DTOs
+│       │   ├── create-purchase-draft.dto.ts
+│       │   ├── create-sale-draft.dto.ts
+│       │   ├── list-transactions-query.dto.ts
+│       │   ├── post-transaction.dto.ts
+│       │   ├── purchase-line.dto.ts
+│       │   └── sale-line.dto.ts
+│       ├── posting.service.ts                        # Core posting logic
+│       ├── transactions.controller.ts                # Transaction API endpoints
+│       ├── transactions.module.ts
+│       └── transactions.service.ts                   # Transaction draft management
+└── test/
+    ├── helpers/
+    │   └── test-factories.ts                         # createAndPostPurchase helper added
+    └── integration/
+        ├── balance-queries.integration.spec.ts       # New balance/stock query tests
+        ├── posting-concurrency.integration.spec.ts   # New concurrency tests
+        ├── posting-purchase.integration.spec.ts      # New purchase posting tests
+        ├── posting-sale.integration.spec.ts          # New sale posting tests
+        └── transactions.integration.spec.ts          # New transaction draft tests
+```
+
+
+
 
 ---
 
@@ -552,4 +590,4 @@ npx tsc --noEmit
 
 **Last Updated**: 2026-02-11
 **Maintainer**: Human + AI Collaboration
-**Status**: Active - Phase 2 Pending
+**Status**: Active - Phase 4 Pending

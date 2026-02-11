@@ -120,6 +120,32 @@ export class ProductsService {
     return this.withComputed(updated);
   }
 
+  async getStock(id: string) {
+    const tenantId = getContext()?.tenantId;
+    if (!tenantId) throw new UnauthorizedException();
+
+    const product = await this.prisma.product.findFirst({
+      where: { id, tenantId },
+    });
+    if (!product) throw new NotFoundException('Product not found');
+
+    const result = await this.prisma.$queryRaw<Array<{ stock: bigint }>>`
+      SELECT COALESCE(SUM(CASE
+        WHEN movement_type IN ('PURCHASE_IN', 'CUSTOMER_RETURN_IN', 'ADJUSTMENT_IN') THEN quantity
+        ELSE -quantity
+      END), 0) AS stock
+      FROM inventory_movements
+      WHERE tenant_id = ${tenantId}::uuid AND product_id = ${id}::uuid
+    `;
+
+    return {
+      productId: id,
+      productName: product.name,
+      currentStock: Number(result[0]?.stock ?? 0),
+      avgCost: product.avgCost,
+    };
+  }
+
   private withComputed(product: any) {
     return {
       ...product,

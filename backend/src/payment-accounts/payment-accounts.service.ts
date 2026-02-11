@@ -118,6 +118,38 @@ export class PaymentAccountsService {
     return this.withComputed(updated);
   }
 
+  async getBalance(id: string) {
+    const tenantId = getContext()?.tenantId;
+    if (!tenantId) throw new UnauthorizedException();
+
+    const account = await this.prisma.paymentAccount.findFirst({
+      where: { id, tenantId },
+    });
+    if (!account) throw new NotFoundException('Payment account not found');
+
+    const result = await this.prisma.$queryRaw<
+      Array<{ total_in: bigint; total_out: bigint }>
+    >`
+      SELECT
+        COALESCE(SUM(CASE WHEN direction = 'IN' THEN amount ELSE 0 END), 0) AS total_in,
+        COALESCE(SUM(CASE WHEN direction = 'OUT' THEN amount ELSE 0 END), 0) AS total_out
+      FROM payment_entries
+      WHERE tenant_id = ${tenantId}::uuid AND payment_account_id = ${id}::uuid
+    `;
+
+    const totalIn = Number(result[0]?.total_in ?? 0);
+    const totalOut = Number(result[0]?.total_out ?? 0);
+    const currentBalance = account.openingBalance + totalIn - totalOut;
+
+    return {
+      paymentAccountId: id,
+      openingBalance: account.openingBalance,
+      totalIn,
+      totalOut,
+      currentBalance,
+    };
+  }
+
   private withComputed(account: any) {
     return {
       ...account,

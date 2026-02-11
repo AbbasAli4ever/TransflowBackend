@@ -1,6 +1,9 @@
 import { PrismaClient } from '@prisma/client';
 import { hash } from 'bcrypt';
 import { v4 as uuid } from 'uuid';
+import * as request from 'supertest';
+import { INestApplication } from '@nestjs/common';
+import { authHeader } from './test-utils';
 
 const PASSWORD_SALT_ROUNDS = 10; // Lower for tests (faster)
 
@@ -198,4 +201,50 @@ export async function createTestPaymentAccount(
       createdBy,
     },
   });
+}
+
+/**
+ * Create a purchase draft and post it via the API.
+ * Returns the posted transaction response body.
+ */
+export async function createAndPostPurchase(
+  app: INestApplication,
+  token: string,
+  options: {
+    supplierId: string;
+    lines: Array<{ productId: string; quantity: number; unitCost: number; discountAmount?: number }>;
+    transactionDate?: string;
+    deliveryFee?: number;
+    paidNow?: number;
+    paymentAccountId?: string;
+    idempotencyKey?: string;
+  },
+) {
+  const transactionDate =
+    options.transactionDate || new Date().toISOString().split('T')[0];
+
+  const draftRes = await request(app.getHttpServer())
+    .post('/api/v1/transactions/purchases/draft')
+    .set(authHeader(token))
+    .send({
+      supplierId: options.supplierId,
+      transactionDate,
+      lines: options.lines,
+      deliveryFee: options.deliveryFee,
+    })
+    .expect(201);
+
+  const transactionId = draftRes.body.id;
+
+  const postRes = await request(app.getHttpServer())
+    .post(`/api/v1/transactions/${transactionId}/post`)
+    .set(authHeader(token))
+    .send({
+      idempotencyKey: options.idempotencyKey || uuid(),
+      paidNow: options.paidNow,
+      paymentAccountId: options.paymentAccountId,
+    })
+    .expect(200);
+
+  return postRes.body;
 }

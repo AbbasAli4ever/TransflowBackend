@@ -9,6 +9,7 @@ import { SuppliersModule } from './suppliers/suppliers.module';
 import { CustomersModule } from './customers/customers.module';
 import { ProductsModule } from './products/products.module';
 import { PaymentAccountsModule } from './payment-accounts/payment-accounts.module';
+import { TransactionsModule } from './transactions/transactions.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { TenantScopeGuard } from './common/guards/tenant-scope.guard';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
@@ -34,6 +35,7 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
     CustomersModule,
     ProductsModule,
     PaymentAccountsModule,
+    TransactionsModule,
   ],
   providers: [
     RequestContextMiddleware,

@@ -119,6 +119,36 @@ export class SuppliersService {
     return this.withComputed(updated);
   }
 
+  async getBalance(id: string) {
+    const tenantId = getContext()?.tenantId;
+    if (!tenantId) throw new UnauthorizedException();
+
+    const supplier = await this.prisma.supplier.findFirst({
+      where: { id, tenantId },
+    });
+    if (!supplier) throw new NotFoundException('Supplier not found');
+
+    const result = await this.prisma.$queryRaw<
+      Array<{ ap_increase: bigint; ap_decrease: bigint }>
+    >`
+      SELECT
+        COALESCE(SUM(CASE WHEN entry_type = 'AP_INCREASE' THEN amount ELSE 0 END), 0) AS ap_increase,
+        COALESCE(SUM(CASE WHEN entry_type = 'AP_DECREASE' THEN amount ELSE 0 END), 0) AS ap_decrease
+      FROM ledger_entries
+      WHERE tenant_id = ${tenantId}::uuid AND supplier_id = ${id}::uuid
+    `;
+
+    const apIncrease = Number(result[0]?.ap_increase ?? 0);
+    const apDecrease = Number(result[0]?.ap_decrease ?? 0);
+
+    return {
+      supplierId: id,
+      totalPurchases: apIncrease,
+      totalPaid: apDecrease,
+      currentBalance: apIncrease - apDecrease,
+    };
+  }
+
   private withComputed(supplier: any) {
     return {
       ...supplier,

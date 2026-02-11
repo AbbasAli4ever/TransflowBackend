@@ -33,4 +33,9 @@ export class SuppliersController {
   updateStatus(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateStatusDto) {
     return this.suppliersService.updateStatus(id, dto);
   }
+
+  @Get(':id/balance')
+  getBalance(@Param('id', ParseUUIDPipe) id: string) {
+    return this.suppliersService.getBalance(id);
+  }
 }

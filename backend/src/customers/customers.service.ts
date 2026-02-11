@@ -119,6 +119,36 @@ export class CustomersService {
     return this.withComputed(updated);
   }
 
+  async getBalance(id: string) {
+    const tenantId = getContext()?.tenantId;
+    if (!tenantId) throw new UnauthorizedException();
+
+    const customer = await this.prisma.customer.findFirst({
+      where: { id, tenantId },
+    });
+    if (!customer) throw new NotFoundException('Customer not found');
+
+    const result = await this.prisma.$queryRaw<
+      Array<{ ar_increase: bigint; ar_decrease: bigint }>
+    >`
+      SELECT
+        COALESCE(SUM(CASE WHEN entry_type = 'AR_INCREASE' THEN amount ELSE 0 END), 0) AS ar_increase,
+        COALESCE(SUM(CASE WHEN entry_type = 'AR_DECREASE' THEN amount ELSE 0 END), 0) AS ar_decrease
+      FROM ledger_entries
+      WHERE tenant_id = ${tenantId}::uuid AND customer_id = ${id}::uuid
+    `;
+
+    const arIncrease = Number(result[0]?.ar_increase ?? 0);
+    const arDecrease = Number(result[0]?.ar_decrease ?? 0);
+
+    return {
+      customerId: id,
+      totalSales: arIncrease,
+      totalReceived: arDecrease,
+      currentBalance: arIncrease - arDecrease,
+    };
+  }
+
   private withComputed(customer: any) {
     return {
       ...customer,

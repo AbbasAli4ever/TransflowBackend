@@ -33,4 +33,9 @@ export class PaymentAccountsController {
   updateStatus(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateStatusDto) {
     return this.paymentAccountsService.updateStatus(id, dto);
   }
+
+  @Get(':id/balance')
+  getBalance(@Param('id', ParseUUIDPipe) id: string) {
+    return this.paymentAccountsService.getBalance(id);
+  }
 }

@@ -33,4 +33,9 @@ export class ProductsController {
   updateStatus(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateStatusDto) {
     return this.productsService.updateStatus(id, dto);
   }
+
+  @Get(':id/stock')
+  getStock(@Param('id', ParseUUIDPipe) id: string) {
+    return this.productsService.getStock(id);
+  }
 }
