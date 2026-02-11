@@ -91,7 +91,7 @@ export class PaymentAccountsService {
 
     try {
       const updated = await this.prisma.paymentAccount.update({
-        where: { id },
+        where: { id, tenantId },
         data: dto,
       });
       return this.withComputed(updated);
@@ -111,7 +111,7 @@ export class PaymentAccountsService {
     if (!existing) throw new NotFoundException('Payment account not found');
 
     const updated = await this.prisma.paymentAccount.update({
-      where: { id },
+      where: { id, tenantId },
       data: { status: dto.status },
     });
 
