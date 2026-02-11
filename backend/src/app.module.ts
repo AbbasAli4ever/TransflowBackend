@@ -5,6 +5,10 @@ import { ConfigService } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { SuppliersModule } from './suppliers/suppliers.module';
+import { CustomersModule } from './customers/customers.module';
+import { ProductsModule } from './products/products.module';
+import { PaymentAccountsModule } from './payment-accounts/payment-accounts.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { TenantScopeGuard } from './common/guards/tenant-scope.guard';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
@@ -26,6 +30,10 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
     PrismaModule,
     AuthModule,
     HealthModule,
+    SuppliersModule,
+    CustomersModule,
+    ProductsModule,
+    PaymentAccountsModule,
   ],
   providers: [
     RequestContextMiddleware,
