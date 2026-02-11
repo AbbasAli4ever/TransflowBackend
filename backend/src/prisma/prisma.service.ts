@@ -2,7 +2,21 @@ import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { getContext } from '../common/request-context';
 
-const TENANT_SCOPED_MODELS = new Set<Prisma.ModelName>(['User']);
+const TENANT_SCOPED_MODELS = new Set<Prisma.ModelName>([
+  'User',
+  'Supplier',
+  'Customer',
+  'Product',
+  'PaymentAccount',
+  'Transaction',
+  'TransactionLine',
+  'InventoryMovement',
+  'LedgerEntry',
+  'PaymentEntry',
+  'Allocation',
+  'ImportBatch',
+  'ImportRow',
+]);
 
 function shouldScopeTenant(model?: Prisma.ModelName) {
   return model ? TENANT_SCOPED_MODELS.has(model) : false;

@@ -12,9 +12,9 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('auth.jwtSecret'),
+        secret: config.get<string>('auth.jwtSecret') as string,
         signOptions: {
-          expiresIn: config.get<string>('auth.jwtExpiration'),
+          expiresIn: config.get<string>('auth.jwtExpiration') as any,
         },
       }),
     }),

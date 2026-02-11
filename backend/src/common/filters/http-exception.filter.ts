@@ -39,7 +39,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
         message = responseBody;
       } else {
         if (responseBody?.errors) {
-          message = responseBody?.message ?? 'Validation failed';
+          message = Array.isArray(responseBody?.message)
+            ? responseBody.message.join(', ')
+            : (responseBody?.message as string ?? 'Validation failed');
           errors = responseBody.errors;
         } else if (Array.isArray(responseBody?.message)) {
           message = 'Validation failed';

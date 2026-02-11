@@ -7,6 +7,87 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum TransactionType {
+  PURCHASE
+  SALE
+  SUPPLIER_PAYMENT
+  CUSTOMER_PAYMENT
+  SUPPLIER_RETURN
+  CUSTOMER_RETURN
+  INTERNAL_TRANSFER
+  ADJUSTMENT
+}
+
+enum TransactionStatus {
+  DRAFT
+  POSTED
+  VOIDED
+}
+
+enum MovementType {
+  PURCHASE_IN
+  SALE_OUT
+  SUPPLIER_RETURN_OUT
+  CUSTOMER_RETURN_IN
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+}
+
+enum LedgerEntryType {
+  AP_INCREASE
+  AP_DECREASE
+  AR_INCREASE
+  AR_DECREASE
+}
+
+enum PaymentEntryType {
+  MONEY_IN
+  MONEY_OUT
+  TRANSFER
+}
+
+enum PaymentDirection {
+  IN
+  OUT
+}
+
+enum PaymentAccountType {
+  CASH
+  BANK
+  WALLET
+  CARD
+}
+
+enum DeliveryType {
+  STORE_PICKUP
+  HOME_DELIVERY
+}
+
+enum ImportSourceType {
+  CSV
+  EXCEL
+  MANUAL
+}
+
+enum ImportModule {
+  SUPPLIERS
+  CUSTOMERS
+  PRODUCTS
+  OPENING_BALANCES
+  TRANSACTIONS
+}
+
+enum ImportStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ImportRowStatus {
+  SUCCESS
+  FAILED
+}
+
 model Tenant {
   id           String   @id @default(uuid()) @db.Uuid
   name         String
@@ -16,7 +97,19 @@ model Tenant {
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  users User[]
+  users              User[]
+  suppliers          Supplier[]
+  customers          Customer[]
+  products           Product[]
+  paymentAccounts    PaymentAccount[]
+  transactions       Transaction[]
+  transactionLines   TransactionLine[]
+  inventoryMovements InventoryMovement[]
+  ledgerEntries      LedgerEntry[]
+  paymentEntries     PaymentEntry[]
+  allocations        Allocation[]
+  importBatches      ImportBatch[]
+  importRows         ImportRow[]
 
   @@map("tenants")
 }
@@ -33,9 +126,338 @@ model User {
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tenant              Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdTransactions Transaction[]       @relation("TransactionCreatedBy")
+  voidedTransactions  Transaction[]       @relation("TransactionVoidedBy")
+  suppliers           Supplier[]
+  customers           Customer[]
+  products            Product[]
+  paymentAccounts     PaymentAccount[]
+  transactionLines    TransactionLine[]
+  inventoryMovements  InventoryMovement[]
+  ledgerEntries       LedgerEntry[]
+  paymentEntries      PaymentEntry[]
+  allocations         Allocation[]
+  importBatches       ImportBatch[]
 
   @@unique([email])
   @@index([tenantId])
   @@map("users")
+}
+
+model Supplier {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String
+  phone     String?
+  address   String?
+  notes     String?
+  status    String   @default("ACTIVE")
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser  User?          @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  transactions   Transaction[]
+  ledgerEntries  LedgerEntry[]
+  paymentEntries PaymentEntry[]
+
+  @@index([tenantId, name])
+  @@map("suppliers")
+}
+
+model Customer {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String
+  phone     String?
+  address   String?
+  notes     String?
+  status    String   @default("ACTIVE")
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser  User?          @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  transactions   Transaction[]
+  ledgerEntries  LedgerEntry[]
+  paymentEntries PaymentEntry[]
+
+  @@index([tenantId, name])
+  @@map("customers")
+}
+
+model Product {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String
+  sku       String?
+  category  String?
+  unit      String?  @default("piece")
+  status    String   @default("ACTIVE")
+  avgCost   Int      @default(0) @map("avg_cost")
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser      User?               @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  transactionLines   TransactionLine[]
+  inventoryMovements InventoryMovement[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId, name])
+  @@map("products")
+}
+
+model PaymentAccount {
+  id             String             @id @default(uuid()) @db.Uuid
+  tenantId       String             @map("tenant_id") @db.Uuid
+  name           String
+  type           PaymentAccountType
+  status         String             @default("ACTIVE")
+  openingBalance Int                @default(0) @map("opening_balance")
+  createdBy      String?            @map("created_by") @db.Uuid
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser  User?          @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  fromTransfers  Transaction[]  @relation("FromPaymentAccount")
+  toTransfers    Transaction[]  @relation("ToPaymentAccount")
+  paymentEntries PaymentEntry[]
+
+  @@unique([tenantId, name])
+  @@map("payment_accounts")
+}
+
+model Transaction {
+  id                   String            @id @default(uuid()) @db.Uuid
+  tenantId             String            @map("tenant_id") @db.Uuid
+  type                 TransactionType
+  status               TransactionStatus @default(DRAFT)
+  series               String?
+  documentNumber       String?           @map("document_number")
+  transactionDate      DateTime          @map("transaction_date") @db.Date
+  postedAt             DateTime?         @map("posted_at") @db.Timestamptz(6)
+  supplierId           String?           @map("supplier_id") @db.Uuid
+  customerId           String?           @map("customer_id") @db.Uuid
+  subtotal             Int               @default(0)
+  discountTotal        Int               @default(0) @map("discount_total")
+  deliveryFee          Int               @default(0) @map("delivery_fee")
+  totalAmount          Int               @default(0) @map("total_amount")
+  paidNow              Int               @default(0) @map("paid_now")
+  deliveryType         DeliveryType?     @map("delivery_type")
+  deliveryAddress      String?           @map("delivery_address")
+  deliveredBy          String?           @map("delivered_by")
+  deliveryNotes        String?           @map("delivery_notes")
+  fromPaymentAccountId String?           @map("from_payment_account_id") @db.Uuid
+  toPaymentAccountId   String?           @map("to_payment_account_id") @db.Uuid
+  idempotencyKey       String?           @map("idempotency_key")
+  voidReason           String?           @map("void_reason")
+  voidedAt             DateTime?         @map("voided_at") @db.Timestamptz(6)
+  voidedBy             String?           @map("voided_by") @db.Uuid
+  createdBy            String?           @map("created_by") @db.Uuid
+  notes                String?
+  source               String?
+  createdAt            DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant             Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  supplier           Supplier?       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  customer           Customer?       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  fromPaymentAccount PaymentAccount? @relation("FromPaymentAccount", fields: [fromPaymentAccountId], references: [id], onDelete: Restrict)
+  toPaymentAccount   PaymentAccount? @relation("ToPaymentAccount", fields: [toPaymentAccountId], references: [id], onDelete: Restrict)
+  createdByUser      User?           @relation("TransactionCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  voidedByUser       User?           @relation("TransactionVoidedBy", fields: [voidedBy], references: [id], onDelete: SetNull)
+
+  transactionLines   TransactionLine[]
+  inventoryMovements InventoryMovement[]
+  ledgerEntries      LedgerEntry[]
+  paymentEntries     PaymentEntry[]
+  paymentAllocations Allocation[]        @relation("PaymentAllocations")
+  appliesAllocations Allocation[]        @relation("AppliesAllocations")
+
+  @@unique([tenantId, type, series, documentNumber])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, transactionDate])
+  @@index([tenantId, type, status])
+  @@index([tenantId, type, series, documentNumber])
+  @@map("transactions")
+}
+
+model TransactionLine {
+  id                      String   @id @default(uuid()) @db.Uuid
+  tenantId                String   @map("tenant_id") @db.Uuid
+  transactionId           String   @map("transaction_id") @db.Uuid
+  productId               String   @map("product_id") @db.Uuid
+  description             String?
+  quantity                Int
+  unit                    String?
+  unitPrice               Int      @default(0) @map("unit_price")
+  unitCost                Int      @default(0) @map("unit_cost")
+  discountAmount          Int      @default(0) @map("discount_amount")
+  lineTotal               Int      @default(0) @map("line_total")
+  costTotal               Int      @default(0) @map("cost_total")
+  sourceTransactionLineId String?  @map("source_transaction_line_id") @db.Uuid
+  createdBy               String?  @map("created_by") @db.Uuid
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  transaction        Transaction         @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  product            Product             @relation(fields: [productId], references: [id], onDelete: Restrict)
+  sourceLine         TransactionLine?    @relation("ReturnSourceLine", fields: [sourceTransactionLineId], references: [id], onDelete: Restrict)
+  returnLines        TransactionLine[]   @relation("ReturnSourceLine")
+  createdByUser      User?               @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  inventoryMovements InventoryMovement[]
+
+  @@index([tenantId, transactionId])
+  @@index([tenantId, sourceTransactionLineId])
+  @@map("transaction_lines")
+}
+
+model InventoryMovement {
+  id                String       @id @default(uuid()) @db.Uuid
+  tenantId          String       @map("tenant_id") @db.Uuid
+  transactionId     String       @map("transaction_id") @db.Uuid
+  transactionLineId String?      @map("transaction_line_id") @db.Uuid
+  productId         String       @map("product_id") @db.Uuid
+  movementType      MovementType @map("movement_type")
+  quantity          Int
+  unitCostAtTime    Int          @default(0) @map("unit_cost_at_time")
+  transactionDate   DateTime     @map("transaction_date") @db.Date
+  createdBy         String?      @map("created_by") @db.Uuid
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  transaction     Transaction      @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  transactionLine TransactionLine? @relation(fields: [transactionLineId], references: [id], onDelete: Restrict)
+  product         Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+  createdByUser   User?            @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, productId, transactionDate])
+  @@map("inventory_movements")
+}
+
+model LedgerEntry {
+  id              String          @id @default(uuid()) @db.Uuid
+  tenantId        String          @map("tenant_id") @db.Uuid
+  transactionId   String          @map("transaction_id") @db.Uuid
+  entryType       LedgerEntryType @map("entry_type")
+  supplierId      String?         @map("supplier_id") @db.Uuid
+  customerId      String?         @map("customer_id") @db.Uuid
+  amount          Int
+  transactionDate DateTime        @map("transaction_date") @db.Date
+  notes           String?
+  createdBy       String?         @map("created_by") @db.Uuid
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  supplier      Supplier?   @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  customer      Customer?   @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  createdByUser User?       @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, supplierId, transactionDate])
+  @@index([tenantId, customerId, transactionDate])
+  @@map("ledger_entries")
+}
+
+model PaymentEntry {
+  id               String           @id @default(uuid()) @db.Uuid
+  tenantId         String           @map("tenant_id") @db.Uuid
+  transactionId    String           @map("transaction_id") @db.Uuid
+  paymentAccountId String           @map("payment_account_id") @db.Uuid
+  entryType        PaymentEntryType @map("entry_type")
+  direction        PaymentDirection
+  amount           Int
+  transferGroupId  String?          @map("transfer_group_id") @db.Uuid
+  transactionDate  DateTime         @map("transaction_date") @db.Date
+  supplierId       String?          @map("supplier_id") @db.Uuid
+  customerId       String?          @map("customer_id") @db.Uuid
+  notes            String?
+  createdBy        String?          @map("created_by") @db.Uuid
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  transaction    Transaction    @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  paymentAccount PaymentAccount @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
+  supplier       Supplier?      @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  customer       Customer?      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  createdByUser  User?          @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, paymentAccountId, transactionDate])
+  @@index([tenantId, transferGroupId])
+  @@map("payment_entries")
+}
+
+model Allocation {
+  id                     String   @id @default(uuid()) @db.Uuid
+  tenantId               String   @map("tenant_id") @db.Uuid
+  paymentTransactionId   String   @map("payment_transaction_id") @db.Uuid
+  appliesToTransactionId String   @map("applies_to_transaction_id") @db.Uuid
+  amountApplied          Int      @map("amount_applied")
+  notes                  String?
+  createdBy              String?  @map("created_by") @db.Uuid
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant               Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  paymentTransaction   Transaction @relation("PaymentAllocations", fields: [paymentTransactionId], references: [id], onDelete: Restrict)
+  appliesToTransaction Transaction @relation("AppliesAllocations", fields: [appliesToTransactionId], references: [id], onDelete: Restrict)
+  createdByUser        User?       @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, paymentTransactionId])
+  @@index([tenantId, appliesToTransactionId])
+  @@map("allocations")
+}
+
+model ImportBatch {
+  id          String           @id @default(uuid()) @db.Uuid
+  tenantId    String           @map("tenant_id") @db.Uuid
+  sourceType  ImportSourceType @map("source_type")
+  module      ImportModule
+  fileName    String?          @map("file_name")
+  status      ImportStatus
+  totalRows   Int              @default(0) @map("total_rows")
+  successRows Int              @default(0) @map("success_rows")
+  failedRows  Int              @default(0) @map("failed_rows")
+  createdBy   String?          @map("created_by") @db.Uuid
+  notes       String?
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?       @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  importRows    ImportRow[]
+
+  @@index([tenantId, module, createdAt])
+  @@map("import_batches")
+}
+
+model ImportRow {
+  id                String          @id @default(uuid()) @db.Uuid
+  tenantId          String          @map("tenant_id") @db.Uuid
+  importBatchId     String          @map("import_batch_id") @db.Uuid
+  rowNumber         Int             @map("row_number")
+  rawDataJson       Json            @map("raw_data_json") @db.JsonB
+  status            ImportRowStatus
+  errorMessage      String?         @map("error_message")
+  createdRecordType String?         @map("created_record_type")
+  createdRecordId   String?         @map("created_record_id") @db.Uuid
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  importBatch ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, importBatchId, rowNumber])
+  @@index([tenantId, importBatchId, status])
+  @@map("import_rows")
 }
