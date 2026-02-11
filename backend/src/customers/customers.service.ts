@@ -95,7 +95,7 @@ export class CustomersService {
     }
 
     const updated = await this.prisma.customer.update({
-      where: { id },
+      where: { id, tenantId },
       data: dto,
     });
 
@@ -112,7 +112,7 @@ export class CustomersService {
     if (!existing) throw new NotFoundException('Customer not found');
 
     const updated = await this.prisma.customer.update({
-      where: { id },
+      where: { id, tenantId },
       data: { status: dto.status },
     });
 

@@ -93,7 +93,7 @@ export class ProductsService {
 
     try {
       const updated = await this.prisma.product.update({
-        where: { id },
+        where: { id, tenantId },
         data: dto,
       });
       return this.withComputed(updated);
@@ -113,7 +113,7 @@ export class ProductsService {
     if (!existing) throw new NotFoundException('Product not found');
 
     const updated = await this.prisma.product.update({
-      where: { id },
+      where: { id, tenantId },
       data: { status: dto.status },
     });
 

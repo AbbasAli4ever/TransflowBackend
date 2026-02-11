@@ -95,7 +95,7 @@ export class SuppliersService {
     }
 
     const updated = await this.prisma.supplier.update({
-      where: { id },
+      where: { id, tenantId },
       data: dto,
     });
 
@@ -112,7 +112,7 @@ export class SuppliersService {
     if (!existing) throw new NotFoundException('Supplier not found');
 
     const updated = await this.prisma.supplier.update({
-      where: { id },
+      where: { id, tenantId },
       data: { status: dto.status },
     });
 
