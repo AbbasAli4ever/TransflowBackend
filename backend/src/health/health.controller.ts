@@ -1,13 +1,28 @@
 import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ApiOkResponse,
+  ApiOperation,
+  ApiServiceUnavailableResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Public } from '../common/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
+import { ApiErrorResponse } from '../common/swagger/api-error-response.dto';
+import { HealthResponseDto } from './dto/health-response.dto';
 
+@ApiTags('Health')
 @Controller('health')
 export class HealthController {
   constructor(private prisma: PrismaService) {}
 
   @Public()
   @Get()
+  @ApiOperation({ summary: 'Service health check' })
+  @ApiOkResponse({ description: 'Service is healthy', type: HealthResponseDto })
+  @ApiServiceUnavailableResponse({
+    description: 'Database is unavailable',
+    type: ApiErrorResponse,
+  })
   async getHealth() {
     const start = Date.now();
     try {

@@ -8,6 +8,7 @@ import { buildValidationPipe } from './common/pipes/validation.pipe';
 import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ApiErrorField, ApiErrorResponse } from './common/swagger/api-error-response.dto';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
@@ -43,12 +44,26 @@ async function bootstrap() {
   if (process.env.NODE_ENV !== 'production') {
     const swaggerConfig = new DocumentBuilder()
       .setTitle('Persona Finance API')
-      .setDescription('Multi-tenant finance system — Phase 1: Authentication & Tenant Management')
+      .setDescription(
+        'Multi-tenant finance system. Standard error response format includes: ' +
+          '`statusCode`, `message`, `errors[]`, `timestamp`, `path`, `requestId`.',
+      )
       .setVersion('1.0')
-      .addBearerAuth()
+      .addBearerAuth(
+        {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          name: 'Authorization',
+          in: 'header',
+        },
+        'bearer',
+      )
       .build();
 
-    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    const document = SwaggerModule.createDocument(app, swaggerConfig, {
+      extraModels: [ApiErrorResponse, ApiErrorField],
+    });
     SwaggerModule.setup('api/docs', app, document);
   }
 

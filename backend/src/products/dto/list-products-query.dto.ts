@@ -1,15 +1,19 @@
 import { IsOptional, IsString, IsIn } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
 export class ListProductsQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ example: 'rice', description: 'Search by name, SKU, or category' })
   @IsOptional()
   @IsString()
   search?: string;
 
+  @ApiPropertyOptional({ enum: ['ACTIVE', 'INACTIVE', 'ALL'], default: 'ACTIVE' })
   @IsOptional()
   @IsIn(['ACTIVE', 'INACTIVE', 'ALL'])
   status?: 'ACTIVE' | 'INACTIVE' | 'ALL' = 'ACTIVE';
 
+  @ApiPropertyOptional({ example: 'Grocery' })
   @IsOptional()
   @IsString()
   category?: string;

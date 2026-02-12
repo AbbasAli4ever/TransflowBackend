@@ -6,7 +6,7 @@
   "scripts": {
     "build": "nest build",
     "start": "nest start",
-    "start:dev": "nest start --watch",
+    "start:dev": "dotenv -e .env.development -- nest start --watch",
     "start:prod": "node dist/main.js",
     "prisma:generate": "dotenv -e .env.development -- prisma generate",
     "prisma:migrate": "dotenv -e .env.development -- prisma migrate dev",

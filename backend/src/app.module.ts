@@ -64,6 +64,6 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(RequestContextMiddleware, TenantContextMiddleware).forRoutes('*');
+    consumer.apply(RequestContextMiddleware, TenantContextMiddleware).forRoutes('*path');
   }
 }
