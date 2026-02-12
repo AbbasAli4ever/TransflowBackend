@@ -8,6 +8,7 @@ import {
 import { Prisma, TransactionType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PostTransactionDto } from './dto/post-transaction.dto';
+import { PaymentAllocationItemDto } from './dto/payment-allocation-item.dto';
 
 @Injectable()
 export class PostingService {
@@ -90,9 +91,13 @@ export class PostingService {
             return this.postPurchase(tx, txn, dto, userId, paymentAmount);
           } else if (txn.type === 'SALE') {
             return this.postSale(tx, txn, dto, userId, paymentAmount);
+          } else if (txn.type === 'SUPPLIER_PAYMENT') {
+            return this.postSupplierPayment(tx, txn, dto, userId);
+          } else if (txn.type === 'CUSTOMER_PAYMENT') {
+            return this.postCustomerPayment(tx, txn, dto, userId);
           } else {
             throw new BadRequestException(
-              'Only PURCHASE and SALE transactions can be posted',
+              'Only PURCHASE, SALE, SUPPLIER_PAYMENT, and CUSTOMER_PAYMENT transactions can be posted',
             );
           }
         },
@@ -393,14 +398,278 @@ export class PostingService {
     type: TransactionType,
     year: number,
   ): Promise<{ documentNumber: string; series: string }> {
+    const prefixMap: Partial<Record<TransactionType, string>> = {
+      PURCHASE: 'PUR',
+      SALE: 'SAL',
+      SUPPLIER_PAYMENT: 'SPY',
+      CUSTOMER_PAYMENT: 'CPY',
+    };
     const series = String(year);
     const count = await tx.transaction.count({
       where: { tenantId, type, series },
     });
     const seq = count + 1;
-    const prefix = type === 'PURCHASE' ? 'PUR' : 'SAL';
+    const prefix = prefixMap[type] ?? type.substring(0, 3);
     const documentNumber = `${prefix}-${year}-${String(seq).padStart(4, '0')}`;
     return { documentNumber, series };
+  }
+
+  private async postSupplierPayment(
+    tx: any,
+    txn: any,
+    dto: PostTransactionDto,
+    userId: string,
+  ) {
+    const transactionDate = new Date(txn.transactionDate);
+
+    if (!txn.fromPaymentAccountId) {
+      throw new BadRequestException('Payment account missing on transaction');
+    }
+
+    const { documentNumber, series } = await this.generateDocumentNumber(
+      tx,
+      txn.tenantId,
+      'SUPPLIER_PAYMENT',
+      transactionDate.getFullYear(),
+    );
+
+    await tx.transaction.update({
+      where: { id: txn.id },
+      data: {
+        status: 'POSTED',
+        documentNumber,
+        series,
+        postedAt: new Date(),
+        idempotencyKey: dto.idempotencyKey,
+      },
+    });
+
+    await tx.paymentEntry.create({
+      data: {
+        tenantId: txn.tenantId,
+        transactionId: txn.id,
+        paymentAccountId: txn.fromPaymentAccountId,
+        entryType: 'MONEY_OUT',
+        direction: 'OUT',
+        amount: txn.totalAmount,
+        transactionDate,
+        supplierId: txn.supplierId,
+        createdBy: userId,
+      },
+    });
+
+    await tx.ledgerEntry.create({
+      data: {
+        tenantId: txn.tenantId,
+        transactionId: txn.id,
+        entryType: 'AP_DECREASE',
+        supplierId: txn.supplierId,
+        amount: txn.totalAmount,
+        transactionDate,
+        createdBy: userId,
+      },
+    });
+
+    if (dto.allocations && dto.allocations.length > 0) {
+      await this.applyManualAllocations(tx, txn, dto.allocations, userId, 'PURCHASE');
+    } else {
+      await this.autoAllocate(tx, txn, userId, 'PURCHASE');
+    }
+
+    return this.fetchFullTransaction(tx, txn.id, txn.tenantId);
+  }
+
+  private async postCustomerPayment(
+    tx: any,
+    txn: any,
+    dto: PostTransactionDto,
+    userId: string,
+  ) {
+    const transactionDate = new Date(txn.transactionDate);
+
+    if (!txn.fromPaymentAccountId) {
+      throw new BadRequestException('Payment account missing on transaction');
+    }
+
+    const { documentNumber, series } = await this.generateDocumentNumber(
+      tx,
+      txn.tenantId,
+      'CUSTOMER_PAYMENT',
+      transactionDate.getFullYear(),
+    );
+
+    await tx.transaction.update({
+      where: { id: txn.id },
+      data: {
+        status: 'POSTED',
+        documentNumber,
+        series,
+        postedAt: new Date(),
+        idempotencyKey: dto.idempotencyKey,
+      },
+    });
+
+    await tx.paymentEntry.create({
+      data: {
+        tenantId: txn.tenantId,
+        transactionId: txn.id,
+        paymentAccountId: txn.fromPaymentAccountId,
+        entryType: 'MONEY_IN',
+        direction: 'IN',
+        amount: txn.totalAmount,
+        transactionDate,
+        customerId: txn.customerId,
+        createdBy: userId,
+      },
+    });
+
+    await tx.ledgerEntry.create({
+      data: {
+        tenantId: txn.tenantId,
+        transactionId: txn.id,
+        entryType: 'AR_DECREASE',
+        customerId: txn.customerId,
+        amount: txn.totalAmount,
+        transactionDate,
+        createdBy: userId,
+      },
+    });
+
+    if (dto.allocations && dto.allocations.length > 0) {
+      await this.applyManualAllocations(tx, txn, dto.allocations, userId, 'SALE');
+    } else {
+      await this.autoAllocate(tx, txn, userId, 'SALE');
+    }
+
+    return this.fetchFullTransaction(tx, txn.id, txn.tenantId);
+  }
+
+  private async autoAllocate(
+    tx: any,
+    txn: any,
+    userId: string,
+    docType: 'PURCHASE' | 'SALE',
+  ) {
+    const tenantId = txn.tenantId;
+
+    let rows: Array<{ id: string; outstanding: bigint }>;
+
+    if (docType === 'PURCHASE') {
+      rows = await tx.$queryRaw<Array<{ id: string; outstanding: bigint }>>`
+        SELECT t.id, t.total_amount - COALESCE(SUM(a.amount_applied), 0) AS outstanding
+        FROM transactions t
+        LEFT JOIN allocations a ON a.applies_to_transaction_id = t.id AND a.tenant_id = ${tenantId}::uuid
+        WHERE t.tenant_id = ${tenantId}::uuid
+          AND t.supplier_id = ${txn.supplierId}::uuid
+          AND t.type = 'PURCHASE'
+          AND t.status = 'POSTED'
+        GROUP BY t.id, t.total_amount, t.transaction_date
+        HAVING t.total_amount - COALESCE(SUM(a.amount_applied), 0) > 0
+        ORDER BY t.transaction_date ASC
+      `;
+    } else {
+      rows = await tx.$queryRaw<Array<{ id: string; outstanding: bigint }>>`
+        SELECT t.id, t.total_amount - COALESCE(SUM(a.amount_applied), 0) AS outstanding
+        FROM transactions t
+        LEFT JOIN allocations a ON a.applies_to_transaction_id = t.id AND a.tenant_id = ${tenantId}::uuid
+        WHERE t.tenant_id = ${tenantId}::uuid
+          AND t.customer_id = ${txn.customerId}::uuid
+          AND t.type = 'SALE'
+          AND t.status = 'POSTED'
+        GROUP BY t.id, t.total_amount, t.transaction_date
+        HAVING t.total_amount - COALESCE(SUM(a.amount_applied), 0) > 0
+        ORDER BY t.transaction_date ASC
+      `;
+    }
+
+    let remaining = txn.totalAmount;
+    for (const row of rows) {
+      if (remaining <= 0) break;
+      const outstanding = Number(row.outstanding);
+      const apply = Math.min(remaining, outstanding);
+      await tx.allocation.create({
+        data: {
+          tenantId,
+          paymentTransactionId: txn.id,
+          appliesToTransactionId: row.id,
+          amountApplied: apply,
+          createdBy: userId,
+        },
+      });
+      remaining -= apply;
+    }
+    // remaining > 0 = unallocated credit — allowed by spec
+  }
+
+  private async applyManualAllocations(
+    tx: any,
+    txn: any,
+    allocations: PaymentAllocationItemDto[],
+    userId: string,
+    docType: 'PURCHASE' | 'SALE',
+  ) {
+    const tenantId = txn.tenantId;
+    const entityId = docType === 'PURCHASE' ? txn.supplierId : txn.customerId;
+
+    const uniqueIds = new Set(allocations.map((a) => a.transactionId));
+    if (uniqueIds.size !== allocations.length) {
+      throw new UnprocessableEntityException(
+        'Duplicate transactionId in allocations array',
+      );
+    }
+
+    const totalRequested = allocations.reduce((sum, a) => sum + a.amount, 0);
+    if (totalRequested > txn.totalAmount) {
+      throw new UnprocessableEntityException(
+        'Total allocations exceed payment amount',
+      );
+    }
+
+    for (const alloc of allocations) {
+      const doc = await tx.transaction.findFirst({
+        where: { id: alloc.transactionId, tenantId, status: 'POSTED', type: docType },
+      });
+      if (!doc) {
+        throw new UnprocessableEntityException(
+          `Document ${alloc.transactionId} not found or not eligible`,
+        );
+      }
+      if (docType === 'PURCHASE' && doc.supplierId !== entityId) {
+        throw new UnprocessableEntityException(
+          `Document ${alloc.transactionId} does not belong to this supplier`,
+        );
+      }
+      if (docType === 'SALE' && doc.customerId !== entityId) {
+        throw new UnprocessableEntityException(
+          `Document ${alloc.transactionId} does not belong to this customer`,
+        );
+      }
+
+      const allocResult = await tx.$queryRaw<Array<{ total_allocated: bigint }>>`
+        SELECT COALESCE(SUM(amount_applied), 0) AS total_allocated
+        FROM allocations
+        WHERE applies_to_transaction_id = ${alloc.transactionId}::uuid
+          AND tenant_id = ${tenantId}::uuid
+      `;
+      const totalAllocated = Number(allocResult[0]?.total_allocated ?? 0);
+      const outstanding = doc.totalAmount - totalAllocated;
+
+      if (alloc.amount > outstanding) {
+        throw new UnprocessableEntityException(
+          `Allocation amount ${alloc.amount} exceeds outstanding ${outstanding} for document ${alloc.transactionId}`,
+        );
+      }
+
+      await tx.allocation.create({
+        data: {
+          tenantId,
+          paymentTransactionId: txn.id,
+          appliesToTransactionId: alloc.transactionId,
+          amountApplied: alloc.amount,
+          createdBy: userId,
+        },
+      });
+    }
   }
 
   private async fetchFullTransaction(

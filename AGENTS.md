@@ -47,10 +47,9 @@ Transaction (Event) → Posting Engine → Truth Tables (Entries)
 | 2 | Schema V1 + Constraints | ✅ Complete | 14 tables, FKs, indexes, seeds |
 | 3 | Master Data APIs | ✅ Complete | Suppliers, Customers, Products, Accounts CRUD |
 | 4 | Posting Engine Core | ✅ Complete | PURCHASE, SALE posting with entries |
-| 5 | Payments + Allocations | ⏳ Next | Standalone payments, allocation system |
+| 5 | Payments + Allocations | ✅ Complete | Standalone payments, allocation system |
 | 6 | Returns + Transfers | 📋 Planned | Returns with strict rules, internal transfers |
 | 7 | Queries + Hardening | 📋 Planned | Dashboards, imports, production prep |
-
 ### Phase Documentation Locations
 
 ```

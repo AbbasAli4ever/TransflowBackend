@@ -26,6 +26,9 @@ import { CreatePurchaseDraftDto } from './dto/create-purchase-draft.dto';
 import { CreateSaleDraftDto } from './dto/create-sale-draft.dto';
 import { PostTransactionDto } from './dto/post-transaction.dto';
 import { ListTransactionsQueryDto } from './dto/list-transactions-query.dto';
+import { CreateSupplierPaymentDraftDto } from './dto/create-supplier-payment-draft.dto';
+import { CreateCustomerPaymentDraftDto } from './dto/create-customer-payment-draft.dto';
+import { ListAllocationsQueryDto } from './dto/list-allocations-query.dto';
 import { ApiErrorResponse } from '../common/swagger/api-error-response.dto';
 import {
   TransactionListResponseDto,
@@ -64,6 +67,44 @@ export class TransactionsController {
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   createSaleDraft(@Body() dto: CreateSaleDraftDto) {
     return this.transactionsService.createSaleDraft(dto);
+  }
+
+  @Post('supplier-payments/draft')
+  @ApiOperation({ summary: 'Create supplier payment draft' })
+  @ApiOkResponse({ description: 'Supplier payment draft created', type: TransactionResponseDto })
+  @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
+  @ApiNotFoundResponse({ description: 'Supplier or payment account not found', type: ApiErrorResponse })
+  @ApiUnprocessableEntityResponse({ description: 'Supplier or payment account inactive', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  createSupplierPaymentDraft(@Body() dto: CreateSupplierPaymentDraftDto) {
+    return this.transactionsService.createSupplierPaymentDraft(dto);
+  }
+
+  @Post('customer-payments/draft')
+  @ApiOperation({ summary: 'Create customer payment draft' })
+  @ApiOkResponse({ description: 'Customer payment draft created', type: TransactionResponseDto })
+  @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
+  @ApiNotFoundResponse({ description: 'Customer or payment account not found', type: ApiErrorResponse })
+  @ApiUnprocessableEntityResponse({ description: 'Customer or payment account inactive', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  createCustomerPaymentDraft(@Body() dto: CreateCustomerPaymentDraftDto) {
+    return this.transactionsService.createCustomerPaymentDraft(dto);
+  }
+
+  @Get('allocations')
+  @ApiOperation({ summary: 'List allocations' })
+  @ApiOkResponse({ description: 'Allocation list' })
+  @ApiQuery({ name: 'supplierId', required: false, type: String })
+  @ApiQuery({ name: 'customerId', required: false, type: String })
+  @ApiQuery({ name: 'purchaseId', required: false, type: String })
+  @ApiQuery({ name: 'saleId', required: false, type: String })
+  @ApiQuery({ name: 'dateFrom', required: false, type: String })
+  @ApiQuery({ name: 'dateTo', required: false, type: String })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  listAllocations(@Query() query: ListAllocationsQueryDto) {
+    return this.transactionsService.listAllocations(query);
   }
 
   @Post(':id/post')

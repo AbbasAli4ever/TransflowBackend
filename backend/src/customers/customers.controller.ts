@@ -97,4 +97,15 @@ export class CustomersController {
   getBalance(@Param('id', ParseUUIDPipe) id: string) {
     return this.customersService.getBalance(id);
   }
+
+  @Get(':id/open-documents')
+  @ApiOperation({ summary: 'Get outstanding sale documents for a customer' })
+  @ApiParam({ name: 'id', description: 'Customer UUID' })
+  @ApiOkResponse({ description: 'Open documents list' })
+  @ApiNotFoundResponse({ description: 'Customer not found', type: ApiErrorResponse })
+  @ApiBadRequestResponse({ description: 'Invalid UUID', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  getOpenDocuments(@Param('id', ParseUUIDPipe) id: string) {
+    return this.customersService.getOpenDocuments(id);
+  }
 }

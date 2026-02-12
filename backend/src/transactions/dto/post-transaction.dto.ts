@@ -6,8 +6,12 @@ import {
   IsInt,
   Min,
   IsUUID,
+  IsArray,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { PaymentAllocationItemDto } from './payment-allocation-item.dto';
 
 export class PostTransactionDto {
   @ApiProperty({
@@ -35,4 +39,14 @@ export class PostTransactionDto {
   @IsOptional()
   @IsUUID()
   paymentAccountId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Manual allocations (for SUPPLIER_PAYMENT / CUSTOMER_PAYMENT only). Omit for auto-allocation.',
+    type: [PaymentAllocationItemDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PaymentAllocationItemDto)
+  allocations?: PaymentAllocationItemDto[];
 }

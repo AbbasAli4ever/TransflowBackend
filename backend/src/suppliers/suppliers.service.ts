@@ -149,6 +149,60 @@ export class SuppliersService {
     };
   }
 
+  async getOpenDocuments(id: string) {
+    const tenantId = getContext()?.tenantId;
+    if (!tenantId) throw new UnauthorizedException();
+
+    const supplier = await this.prisma.supplier.findFirst({
+      where: { id, tenantId },
+    });
+    if (!supplier) throw new NotFoundException('Supplier not found');
+
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        document_number: string;
+        transaction_date: Date;
+        total_amount: bigint;
+        paid_amount: bigint;
+        outstanding: bigint;
+      }>
+    >`
+      SELECT
+        t.id,
+        t.document_number,
+        t.transaction_date,
+        t.total_amount,
+        COALESCE(SUM(a.amount_applied), 0) AS paid_amount,
+        t.total_amount - COALESCE(SUM(a.amount_applied), 0) AS outstanding
+      FROM transactions t
+      LEFT JOIN allocations a ON a.applies_to_transaction_id = t.id AND a.tenant_id = ${tenantId}::uuid
+      WHERE t.tenant_id = ${tenantId}::uuid
+        AND t.supplier_id = ${id}::uuid
+        AND t.type = 'PURCHASE'
+        AND t.status = 'POSTED'
+      GROUP BY t.id, t.document_number, t.transaction_date, t.total_amount
+      HAVING t.total_amount - COALESCE(SUM(a.amount_applied), 0) > 0
+      ORDER BY t.transaction_date ASC
+    `;
+
+    const totalOutstanding = rows.reduce((sum, r) => sum + Number(r.outstanding), 0);
+
+    return {
+      supplierId: id,
+      supplierName: supplier.name,
+      totalOutstanding,
+      documents: rows.map((r) => ({
+        id: r.id,
+        documentNumber: r.document_number,
+        transactionDate: r.transaction_date,
+        totalAmount: Number(r.total_amount),
+        paidAmount: Number(r.paid_amount),
+        outstanding: Number(r.outstanding),
+      })),
+    };
+  }
+
   private withComputed(supplier: any) {
     return {
       ...supplier,

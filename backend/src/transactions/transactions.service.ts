@@ -13,6 +13,9 @@ import { CreatePurchaseDraftDto } from './dto/create-purchase-draft.dto';
 import { CreateSaleDraftDto } from './dto/create-sale-draft.dto';
 import { PostTransactionDto } from './dto/post-transaction.dto';
 import { ListTransactionsQueryDto } from './dto/list-transactions-query.dto';
+import { CreateSupplierPaymentDraftDto } from './dto/create-supplier-payment-draft.dto';
+import { CreateCustomerPaymentDraftDto } from './dto/create-customer-payment-draft.dto';
+import { ListAllocationsQueryDto } from './dto/list-allocations-query.dto';
 
 @Injectable()
 export class TransactionsService {
@@ -228,6 +231,131 @@ export class TransactionsService {
     });
     if (!transaction) throw new NotFoundException('Transaction not found');
     return transaction;
+  }
+
+  async createSupplierPaymentDraft(dto: CreateSupplierPaymentDraftDto) {
+    const tenantId = getContext()?.tenantId;
+    if (!tenantId) throw new UnauthorizedException();
+    const createdBy = getContext()?.userId;
+
+    this.assertDateNotFuture(dto.transactionDate);
+
+    const supplier = await this.prisma.supplier.findFirst({
+      where: { id: dto.supplierId, tenantId },
+    });
+    if (!supplier) throw new NotFoundException('Supplier not found');
+    if (supplier.status !== 'ACTIVE') {
+      throw new UnprocessableEntityException('Supplier is not active');
+    }
+
+    const account = await this.prisma.paymentAccount.findFirst({
+      where: { id: dto.paymentAccountId, tenantId },
+    });
+    if (!account) throw new NotFoundException('Payment account not found');
+    if (account.status !== 'ACTIVE') {
+      throw new UnprocessableEntityException('Payment account is not active');
+    }
+
+    return this.prisma.transaction.create({
+      data: {
+        tenantId,
+        type: 'SUPPLIER_PAYMENT',
+        status: 'DRAFT',
+        transactionDate: new Date(dto.transactionDate),
+        supplierId: dto.supplierId,
+        fromPaymentAccountId: dto.paymentAccountId,
+        totalAmount: dto.amount,
+        subtotal: dto.amount,
+        notes: dto.notes,
+        createdBy,
+      },
+    });
+  }
+
+  async createCustomerPaymentDraft(dto: CreateCustomerPaymentDraftDto) {
+    const tenantId = getContext()?.tenantId;
+    if (!tenantId) throw new UnauthorizedException();
+    const createdBy = getContext()?.userId;
+
+    this.assertDateNotFuture(dto.transactionDate);
+
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: dto.customerId, tenantId },
+    });
+    if (!customer) throw new NotFoundException('Customer not found');
+    if (customer.status !== 'ACTIVE') {
+      throw new UnprocessableEntityException('Customer is not active');
+    }
+
+    const account = await this.prisma.paymentAccount.findFirst({
+      where: { id: dto.paymentAccountId, tenantId },
+    });
+    if (!account) throw new NotFoundException('Payment account not found');
+    if (account.status !== 'ACTIVE') {
+      throw new UnprocessableEntityException('Payment account is not active');
+    }
+
+    return this.prisma.transaction.create({
+      data: {
+        tenantId,
+        type: 'CUSTOMER_PAYMENT',
+        status: 'DRAFT',
+        transactionDate: new Date(dto.transactionDate),
+        customerId: dto.customerId,
+        fromPaymentAccountId: dto.paymentAccountId,
+        totalAmount: dto.amount,
+        subtotal: dto.amount,
+        notes: dto.notes,
+        createdBy,
+      },
+    });
+  }
+
+  async listAllocations(query: ListAllocationsQueryDto) {
+    const tenantId = getContext()?.tenantId;
+    if (!tenantId) throw new UnauthorizedException();
+
+    const { page, limit, supplierId, customerId, purchaseId, saleId, dateFrom, dateTo } = query;
+    const skip = (page - 1) * limit;
+
+    const where: any = { tenantId };
+
+    if (supplierId) {
+      where.paymentTransaction = { supplierId };
+    }
+    if (customerId) {
+      where.paymentTransaction = { ...where.paymentTransaction, customerId };
+    }
+    if (purchaseId) {
+      where.appliesToTransactionId = purchaseId;
+    } else if (saleId) {
+      where.appliesToTransactionId = saleId;
+    }
+    if (dateFrom || dateTo) {
+      where.createdAt = {};
+      if (dateFrom) where.createdAt.gte = new Date(dateFrom);
+      if (dateTo) where.createdAt.lte = new Date(dateTo);
+    }
+
+    const [allocations, total] = await Promise.all([
+      this.prisma.allocation.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          paymentTransaction: {
+            select: { id: true, documentNumber: true, transactionDate: true, totalAmount: true, type: true },
+          },
+          appliesToTransaction: {
+            select: { id: true, documentNumber: true, transactionDate: true, totalAmount: true, type: true },
+          },
+        },
+      }),
+      this.prisma.allocation.count({ where }),
+    ]);
+
+    return paginateResponse(allocations, total, page, limit);
   }
 
   // ─── helpers ────────────────────────────────────────────────────────────────

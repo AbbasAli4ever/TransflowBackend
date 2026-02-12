@@ -204,6 +204,50 @@ export async function createTestPaymentAccount(
 }
 
 /**
+ * Create a supplier payment draft and post it via the API.
+ * Returns the posted transaction response body.
+ */
+export async function createAndPostSupplierPayment(
+  app: INestApplication,
+  token: string,
+  options: {
+    supplierId: string;
+    amount: number;
+    paymentAccountId: string;
+    transactionDate?: string;
+    idempotencyKey?: string;
+    allocations?: Array<{ transactionId: string; amount: number }>;
+  },
+) {
+  const transactionDate =
+    options.transactionDate || new Date().toISOString().split('T')[0];
+
+  const draftRes = await request(app.getHttpServer())
+    .post('/api/v1/transactions/supplier-payments/draft')
+    .set(authHeader(token))
+    .send({
+      supplierId: options.supplierId,
+      amount: options.amount,
+      paymentAccountId: options.paymentAccountId,
+      transactionDate,
+    })
+    .expect(201);
+
+  const transactionId = draftRes.body.id;
+
+  const postRes = await request(app.getHttpServer())
+    .post(`/api/v1/transactions/${transactionId}/post`)
+    .set(authHeader(token))
+    .send({
+      idempotencyKey: options.idempotencyKey || uuid(),
+      allocations: options.allocations,
+    })
+    .expect(200);
+
+  return postRes.body;
+}
+
+/**
  * Create a purchase draft and post it via the API.
  * Returns the posted transaction response body.
  */
@@ -242,6 +286,52 @@ export async function createAndPostPurchase(
     .send({
       idempotencyKey: options.idempotencyKey || uuid(),
       paidNow: options.paidNow,
+      paymentAccountId: options.paymentAccountId,
+    })
+    .expect(200);
+
+  return postRes.body;
+}
+
+/**
+ * Create a sale draft and post it via the API.
+ * Returns the posted transaction response body.
+ */
+export async function createAndPostSale(
+  app: INestApplication,
+  token: string,
+  options: {
+    customerId: string;
+    lines: Array<{ productId: string; quantity: number; unitPrice: number; discountAmount?: number }>;
+    transactionDate?: string;
+    deliveryFee?: number;
+    receivedNow?: number;
+    paymentAccountId?: string;
+    idempotencyKey?: string;
+  },
+) {
+  const transactionDate =
+    options.transactionDate || new Date().toISOString().split('T')[0];
+
+  const draftRes = await request(app.getHttpServer())
+    .post('/api/v1/transactions/sales/draft')
+    .set(authHeader(token))
+    .send({
+      customerId: options.customerId,
+      transactionDate,
+      lines: options.lines,
+      deliveryFee: options.deliveryFee,
+    })
+    .expect(201);
+
+  const transactionId = draftRes.body.id;
+
+  const postRes = await request(app.getHttpServer())
+    .post(`/api/v1/transactions/${transactionId}/post`)
+    .set(authHeader(token))
+    .send({
+      idempotencyKey: options.idempotencyKey || uuid(),
+      receivedNow: options.receivedNow,
       paymentAccountId: options.paymentAccountId,
     })
     .expect(200);

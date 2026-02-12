@@ -97,4 +97,15 @@ export class SuppliersController {
   getBalance(@Param('id', ParseUUIDPipe) id: string) {
     return this.suppliersService.getBalance(id);
   }
+
+  @Get(':id/open-documents')
+  @ApiOperation({ summary: 'Get outstanding purchase documents for a supplier' })
+  @ApiParam({ name: 'id', description: 'Supplier UUID' })
+  @ApiOkResponse({ description: 'Open documents list' })
+  @ApiNotFoundResponse({ description: 'Supplier not found', type: ApiErrorResponse })
+  @ApiBadRequestResponse({ description: 'Invalid UUID', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  getOpenDocuments(@Param('id', ParseUUIDPipe) id: string) {
+    return this.suppliersService.getOpenDocuments(id);
+  }
 }
