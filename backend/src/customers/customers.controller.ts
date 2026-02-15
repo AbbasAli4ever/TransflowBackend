@@ -17,6 +17,7 @@ import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { ListCustomersQueryDto } from './dto/list-customers-query.dto';
 import { UpdateStatusDto } from '../common/dto/update-status.dto';
 import { ApiErrorResponse } from '../common/swagger/api-error-response.dto';
+import { Roles } from '../common/decorators/roles.decorator';
 import {
   CustomerBalanceResponseDto,
   CustomerListResponseDto,
@@ -30,6 +31,7 @@ export class CustomersController {
   constructor(private customersService: CustomersService) {}
 
   @Post()
+  @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Create customer' })
   @ApiOkResponse({ description: 'Customer created', type: CustomerResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
@@ -65,6 +67,7 @@ export class CustomersController {
   }
 
   @Patch(':id')
+  @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Update customer' })
   @ApiParam({ name: 'id', description: 'Customer UUID' })
   @ApiOkResponse({ description: 'Customer updated', type: CustomerResponseDto })
@@ -77,6 +80,7 @@ export class CustomersController {
   }
 
   @Patch(':id/status')
+  @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Update customer status' })
   @ApiParam({ name: 'id', description: 'Customer UUID' })
   @ApiOkResponse({ description: 'Customer status updated', type: CustomerResponseDto })

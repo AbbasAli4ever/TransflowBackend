@@ -2,12 +2,14 @@ import {
   Injectable,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { v4 as uuid } from 'uuid';
 import { Prisma, TransactionType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { getContext } from '../common/request-context';
 import { PostTransactionDto } from './dto/post-transaction.dto';
 import { PaymentAllocationItemDto } from './dto/payment-allocation-item.dto';
 
@@ -439,6 +441,21 @@ export class PostingService {
       throw new BadRequestException('Payment account missing on transaction');
     }
 
+    // Task 2.7 — Revalidate supplier and payment account are still ACTIVE at post time
+    const supplier = await tx.supplier.findFirst({
+      where: { id: txn.supplierId, tenantId: txn.tenantId },
+    });
+    if (!supplier || supplier.status !== 'ACTIVE') {
+      throw new BadRequestException('Supplier is not active');
+    }
+
+    const paymentAccount = await tx.paymentAccount.findFirst({
+      where: { id: txn.fromPaymentAccountId, tenantId: txn.tenantId },
+    });
+    if (!paymentAccount || paymentAccount.status !== 'ACTIVE') {
+      throw new BadRequestException('Payment account is not active');
+    }
+
     const { documentNumber, series } = await this.generateDocumentNumber(
       tx,
       txn.tenantId,
@@ -502,6 +519,21 @@ export class PostingService {
 
     if (!txn.fromPaymentAccountId) {
       throw new BadRequestException('Payment account missing on transaction');
+    }
+
+    // Task 2.7 — Revalidate customer and payment account are still ACTIVE at post time
+    const customer = await tx.customer.findFirst({
+      where: { id: txn.customerId, tenantId: txn.tenantId },
+    });
+    if (!customer || customer.status !== 'ACTIVE') {
+      throw new BadRequestException('Customer is not active');
+    }
+
+    const paymentAccount = await tx.paymentAccount.findFirst({
+      where: { id: txn.fromPaymentAccountId, tenantId: txn.tenantId },
+    });
+    if (!paymentAccount || paymentAccount.status !== 'ACTIVE') {
+      throw new BadRequestException('Payment account is not active');
     }
 
     const { documentNumber, series } = await this.generateDocumentNumber(
@@ -571,17 +603,32 @@ export class PostingService {
       include: { product: true },
     });
 
-    // Re-validate returnableQty within Serializable tx
+    // Task 2.4 — Aggregate quantities by sourceTransactionLineId to prevent over-return via duplicates
+    const aggregatedReturnQty = new Map<string, number>();
     for (const line of lines) {
       if (!line.sourceTransactionLineId) continue;
-      const returnableQty = await this.getReturnableQty(
-        tx,
+      aggregatedReturnQty.set(
         line.sourceTransactionLineId,
-        txn.tenantId,
+        (aggregatedReturnQty.get(line.sourceTransactionLineId) ?? 0) + line.quantity,
       );
-      if (line.quantity > returnableQty) {
+    }
+
+    // Re-validate returnableQty within Serializable tx using aggregated quantities
+    for (const [sourceLineId, totalQty] of aggregatedReturnQty) {
+      const returnableQty = await this.getReturnableQty(tx, sourceLineId, txn.tenantId);
+      if (totalQty > returnableQty) {
         throw new UnprocessableEntityException(
-          `Return quantity ${line.quantity} exceeds returnable ${returnableQty} for line ${line.sourceTransactionLineId}`,
+          `Return quantity ${totalQty} exceeds returnable ${returnableQty} for line ${sourceLineId}`,
+        );
+      }
+    }
+
+    // Task 2.1 — Stock check: ensure current stock >= return quantity for each product
+    for (const line of lines) {
+      const currentStock = await this.calculateProductStock(tx, txn.tenantId, line.productId);
+      if (currentStock < line.quantity) {
+        throw new UnprocessableEntityException(
+          `Insufficient stock for product ${line.productId}: available ${currentStock}, required ${line.quantity}`,
         );
       }
     }
@@ -647,17 +694,29 @@ export class PostingService {
       include: { product: true },
     });
 
-    // Re-validate returnableQty within Serializable tx
+    // Task 2.5 — returnHandling is required for CUSTOMER_RETURN posting
+    if (!dto.returnHandling) {
+      throw new BadRequestException(
+        'returnHandling is required for CUSTOMER_RETURN posting: REFUND_NOW or STORE_CREDIT',
+      );
+    }
+
+    // Task 2.4 — Aggregate quantities by sourceTransactionLineId to prevent over-return via duplicates
+    const aggregatedReturnQty = new Map<string, number>();
     for (const line of lines) {
       if (!line.sourceTransactionLineId) continue;
-      const returnableQty = await this.getReturnableQty(
-        tx,
+      aggregatedReturnQty.set(
         line.sourceTransactionLineId,
-        txn.tenantId,
+        (aggregatedReturnQty.get(line.sourceTransactionLineId) ?? 0) + line.quantity,
       );
-      if (line.quantity > returnableQty) {
+    }
+
+    // Re-validate returnableQty within Serializable tx using aggregated quantities
+    for (const [sourceLineId, totalQty] of aggregatedReturnQty) {
+      const returnableQty = await this.getReturnableQty(tx, sourceLineId, txn.tenantId);
+      if (totalQty > returnableQty) {
         throw new UnprocessableEntityException(
-          `Return quantity ${line.quantity} exceeds returnable ${returnableQty} for line ${line.sourceTransactionLineId}`,
+          `Return quantity ${totalQty} exceeds returnable ${returnableQty} for line ${sourceLineId}`,
         );
       }
     }
@@ -842,6 +901,12 @@ export class PostingService {
     dto: PostTransactionDto,
     userId: string,
   ) {
+    // Task 2.3 — Only OWNER or ADMIN can post adjustments
+    const userRole = getContext()?.userRole;
+    if (userRole !== 'OWNER' && userRole !== 'ADMIN') {
+      throw new ForbiddenException('Only OWNER or ADMIN can post adjustments');
+    }
+
     const transactionDate = new Date(txn.transactionDate);
 
     const lines = await tx.transactionLine.findMany({
@@ -867,9 +932,26 @@ export class PostingService {
     });
 
     for (const line of lines) {
-      // Parse direction and reason from description field: "IN|reason text"
-      const [direction] = (line.description ?? 'IN|').split('|');
+      // Parse direction and reason from JSON in description field
+      let direction = 'IN';
+      try {
+        const parsed = JSON.parse(line.description ?? '{}');
+        if (parsed.direction === 'OUT') direction = 'OUT';
+      } catch {
+        // legacy pipe-delimited fallback
+        direction = (line.description ?? 'IN|').split('|')[0] ?? 'IN';
+      }
       const movementType = direction === 'OUT' ? 'ADJUSTMENT_OUT' : 'ADJUSTMENT_IN';
+
+      // Task 2.2 — Stock check before ADJUSTMENT_OUT
+      if (movementType === 'ADJUSTMENT_OUT') {
+        const currentStock = await this.calculateProductStock(tx, txn.tenantId, line.productId);
+        if (currentStock < line.quantity) {
+          throw new UnprocessableEntityException(
+            `Insufficient stock for product ${line.productId}: available ${currentStock}, required ${line.quantity}`,
+          );
+        }
+      }
 
       await tx.inventoryMovement.create({
         data: {

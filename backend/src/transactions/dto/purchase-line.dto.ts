@@ -13,7 +13,7 @@ export class PurchaseLineDto {
 
   @ApiProperty({ example: 12000, description: 'Unit cost in PKR (integer)' })
   @IsInt()
-  @Min(0)
+  @Min(1)
   unitCost!: number;
 
   @ApiPropertyOptional({ example: 0, description: 'Discount amount in PKR (integer)' })

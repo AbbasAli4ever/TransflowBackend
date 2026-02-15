@@ -20,13 +20,18 @@ describe('ProductsService', () => {
         create: jest.fn(),
         update: jest.fn(),
       },
+      statusChangeLog: { create: jest.fn() },
+      $queryRaw: jest.fn().mockResolvedValue([{ stock: 0n }]),
+      $transaction: jest.fn().mockImplementation((args: any[]) =>
+        Promise.all(args.map((op: any) => (typeof op?.then === 'function' ? op : Promise.resolve(op))))
+      ),
     };
 
     service = new ProductsService(prisma as PrismaService);
   });
 
   describe('create', () => {
-    it('creates product and returns with _computed', async () => {
+    it('creates product without _computed', async () => {
       prisma.product.create.mockResolvedValue({
         id: 'prod-1',
         tenantId: 'tenant-1',
@@ -44,10 +49,7 @@ describe('ProductsService', () => {
       const result = await service.create({ name: 'Widget', sku: 'WID-001' });
 
       expect(result.name).toBe('Widget');
-      expect(result._computed).toBeDefined();
-      expect(result._computed.currentStock).toBe(0);
-      expect(result._computed.totalPurchased).toBe(0);
-      expect(result._computed.totalSold).toBe(0);
+      expect(result).not.toHaveProperty('_computed');
     });
 
     it('throws ConflictException on duplicate SKU (P2002)', async () => {

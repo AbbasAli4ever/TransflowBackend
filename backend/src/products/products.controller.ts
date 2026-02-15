@@ -17,6 +17,7 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { ListProductsQueryDto } from './dto/list-products-query.dto';
 import { UpdateStatusDto } from '../common/dto/update-status.dto';
 import { ApiErrorResponse } from '../common/swagger/api-error-response.dto';
+import { Roles } from '../common/decorators/roles.decorator';
 import {
   ProductListResponseDto,
   ProductResponseDto,
@@ -30,6 +31,7 @@ export class ProductsController {
   constructor(private productsService: ProductsService) {}
 
   @Post()
+  @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Create product' })
   @ApiOkResponse({ description: 'Product created', type: ProductResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
@@ -64,6 +66,7 @@ export class ProductsController {
   }
 
   @Patch(':id')
+  @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Update product' })
   @ApiParam({ name: 'id', description: 'Product UUID' })
   @ApiOkResponse({ description: 'Product updated', type: ProductResponseDto })
@@ -76,6 +79,7 @@ export class ProductsController {
   }
 
   @Patch(':id/status')
+  @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Update product status' })
   @ApiParam({ name: 'id', description: 'Product UUID' })
   @ApiOkResponse({ description: 'Product status updated', type: ProductResponseDto })

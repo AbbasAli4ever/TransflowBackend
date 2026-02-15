@@ -388,6 +388,8 @@ export async function createAndPostCustomerReturn(
     lines: Array<{ sourceTransactionLineId: string; quantity: number }>;
     transactionDate?: string;
     idempotencyKey?: string;
+    returnHandling?: 'REFUND_NOW' | 'STORE_CREDIT';
+    paymentAccountId?: string;
   },
 ) {
   const transactionDate =
@@ -408,7 +410,12 @@ export async function createAndPostCustomerReturn(
   const postRes = await request(app.getHttpServer())
     .post(`/api/v1/transactions/${transactionId}/post`)
     .set(authHeader(token))
-    .send({ idempotencyKey: options.idempotencyKey || uuid() })
+    .send({
+      idempotencyKey: options.idempotencyKey || uuid(),
+      // returnHandling is required; default to STORE_CREDIT for backwards-compat callers
+      returnHandling: options.returnHandling ?? 'STORE_CREDIT',
+      paymentAccountId: options.paymentAccountId,
+    })
     .expect(200);
 
   return postRes.body;

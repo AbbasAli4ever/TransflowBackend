@@ -48,8 +48,7 @@ describe('Suppliers API (Integration)', () => {
       expect(response.body.name).toBe('Acme Supplies');
       expect(response.body.id).toBeDefined();
       expect(response.body.tenantId).toBe(tenantId);
-      expect(response.body._computed).toBeDefined();
-      expect(response.body._computed.totalPurchases).toBe(0);
+      expect(response.body).not.toHaveProperty('_computed');
     });
 
     it('rejects duplicate name (case-insensitive)', async () => {
@@ -147,7 +146,7 @@ describe('Suppliers API (Integration)', () => {
 
       expect(response.body.id).toBe(supplier.id);
       expect(response.body.name).toBe('Test Supplier');
-      expect(response.body._computed).toBeDefined();
+      expect(response.body).not.toHaveProperty('_computed');
     });
 
     it('returns 404 for nonexistent supplier', async () => {
@@ -223,6 +222,53 @@ describe('Suppliers API (Integration)', () => {
         .set(authHeader(token))
         .send({ status: 'DELETED' })
         .expect(400);
+    });
+  });
+
+  // ─── Wave 3 — DB-level uniqueness enforcement ────────────────────────────────
+
+  describe('Wave 3 — Uniqueness constraint (Task 3.1 / 3.2)', () => {
+    it('rejects duplicate supplier name case-insensitively (via DB unique index)', async () => {
+      // First create succeeds
+      await request(app.getHttpServer())
+        .post('/api/v1/suppliers')
+        .set(authHeader(token))
+        .send({ name: 'Acme Corp' })
+        .expect(201);
+
+      // Second create with different case must fail with 409
+      await request(app.getHttpServer())
+        .post('/api/v1/suppliers')
+        .set(authHeader(token))
+        .send({ name: 'acme corp' })
+        .expect(409);
+    });
+
+    it('rejects duplicate name on update (case-insensitive)', async () => {
+      await createTestSupplier(prisma, tenantId, userId, { name: 'Alpha Sup' });
+      const beta = await createTestSupplier(prisma, tenantId, userId, { name: 'Beta Sup' });
+
+      await request(app.getHttpServer())
+        .patch(`/api/v1/suppliers/${beta.id}`)
+        .set(authHeader(token))
+        .send({ name: 'ALPHA SUP' })
+        .expect(409);
+    });
+
+    it('concurrent duplicate supplier creation returns 409 (not 500)', async () => {
+      const [r1, r2] = await Promise.all([
+        request(app.getHttpServer())
+          .post('/api/v1/suppliers')
+          .set(authHeader(token))
+          .send({ name: 'Race Supplier' }),
+        request(app.getHttpServer())
+          .post('/api/v1/suppliers')
+          .set(authHeader(token))
+          .send({ name: 'Race Supplier' }),
+      ]);
+      const statuses = [r1.status, r2.status].sort();
+      expect(statuses).toContain(201);
+      expect(statuses).toContain(409);
     });
   });
 });

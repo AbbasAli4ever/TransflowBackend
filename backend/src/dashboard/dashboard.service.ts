@@ -1,7 +1,11 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getContext } from '../common/request-context';
 import { DashboardQueryDto } from './dto/dashboard-query.dto';
+import { safeMoney } from '../common/utils/money';
+
+type TxClient = Prisma.TransactionClient;
 
 @Injectable()
 export class DashboardService {
@@ -9,25 +13,30 @@ export class DashboardService {
 
   async getSummary(query: DashboardQueryDto) {
     const tenantId = this.requireTenantId();
-    const asOfDate = query.asOfDate ?? this.today();
+    const asOfDate = query.asOfDate ?? await this.getBusinessDate(tenantId);
     const overdueThreshold = this.subtractDays(asOfDate, 30);
 
-    const [cashRows, invRows, recRows, payRows, actRows] = await Promise.all([
-      this.queryCash(tenantId, asOfDate),
-      this.queryInventory(tenantId, asOfDate),
-      this.queryReceivables(tenantId, asOfDate, overdueThreshold),
-      this.queryPayables(tenantId, asOfDate, overdueThreshold),
-      this.queryRecentActivity(tenantId, asOfDate),
-    ]);
+    // Task 8.1: all 5 sub-queries run inside a single RepeatableRead snapshot
+    const [cashRows, invRows, recRows, payRows, actRows] = await this.prisma.$transaction(
+      async (tx) =>
+        Promise.all([
+          this.queryCash(tx, tenantId, asOfDate),
+          this.queryInventory(tx, tenantId, asOfDate),
+          this.queryReceivables(tx, tenantId, asOfDate, overdueThreshold),
+          this.queryPayables(tx, tenantId, asOfDate, overdueThreshold),
+          this.queryRecentActivity(tx, tenantId, asOfDate),
+        ]),
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
 
     // Cash section
-    const accounts = cashRows.map((r) => ({ name: r.name, balance: Number(r.balance) }));
+    const accounts = cashRows.map((r) => ({ name: r.name, balance: safeMoney(r.balance) }));
     const totalBalance = accounts.reduce((sum, a) => sum + a.balance, 0);
 
     // Inventory section
     const inv = invRows[0];
     const inventory = {
-      totalValue: Number(inv.totalValue),
+      totalValue: safeMoney(inv.totalValue),
       totalProducts: Number(inv.totalProducts),
       lowStockCount: Number(inv.lowStockCount),
     };
@@ -35,28 +44,28 @@ export class DashboardService {
     // Receivables section
     const rec = recRows[0];
     const receivables = {
-      totalAmount: Number(rec.totalAmount),
+      totalAmount: safeMoney(rec.totalAmount),
       customerCount: Number(rec.customerCount),
-      overdueAmount: Number(rec.overdueAmount),
+      overdueAmount: safeMoney(rec.overdueAmount),
       overdueCount: Number(rec.overdueCount),
     };
 
     // Payables section
     const pay = payRows[0];
     const payables = {
-      totalAmount: Number(pay.totalAmount),
+      totalAmount: safeMoney(pay.totalAmount),
       supplierCount: Number(pay.supplierCount),
-      overdueAmount: Number(pay.overdueAmount),
+      overdueAmount: safeMoney(pay.overdueAmount),
       overdueCount: Number(pay.overdueCount),
     };
 
     // Recent activity section
     const act = actRows[0];
     const recentActivity = {
-      todaySales: Number(act.todaySales),
-      todayPurchases: Number(act.todayPurchases),
-      todayPayments: Number(act.todayPayments),
-      todayReceipts: Number(act.todayReceipts),
+      todaySales: safeMoney(act.todaySales),
+      todayPurchases: safeMoney(act.todayPurchases),
+      todayPayments: safeMoney(act.todayPayments),
+      todayReceipts: safeMoney(act.todayReceipts),
     };
 
     return {
@@ -71,8 +80,8 @@ export class DashboardService {
 
   // ─── Sub-queries ─────────────────────────────────────────────────────────────
 
-  private queryCash(tenantId: string, asOfDate: string) {
-    return this.prisma.$queryRaw<Array<{ id: string; name: string; balance: bigint }>>`
+  private queryCash(tx: TxClient, tenantId: string, asOfDate: string) {
+    return tx.$queryRaw<Array<{ id: string; name: string; balance: bigint }>>`
       SELECT
         pa.id,
         pa.name,
@@ -91,8 +100,8 @@ export class DashboardService {
     `;
   }
 
-  private queryInventory(tenantId: string, asOfDate: string) {
-    return this.prisma.$queryRaw<
+  private queryInventory(tx: TxClient, tenantId: string, asOfDate: string) {
+    return tx.$queryRaw<
       Array<{ totalProducts: number; totalValue: bigint; lowStockCount: number }>
     >`
       WITH active_products AS (
@@ -137,8 +146,8 @@ export class DashboardService {
     `;
   }
 
-  private queryReceivables(tenantId: string, asOfDate: string, overdueThreshold: string) {
-    return this.prisma.$queryRaw<
+  private queryReceivables(tx: TxClient, tenantId: string, asOfDate: string, overdueThreshold: string) {
+    return tx.$queryRaw<
       Array<{ customerCount: number; totalAmount: bigint; overdueCount: number; overdueAmount: bigint }>
     >`
       WITH ar_balances AS (
@@ -154,10 +163,13 @@ export class DashboardService {
         HAVING SUM(CASE WHEN le.entry_type = 'AR_INCREASE' THEN le.amount ELSE -le.amount END) > 0
       ),
       alloc_sums AS (
-        SELECT applies_to_transaction_id AS txn_id, SUM(amount_applied) AS paid
-        FROM allocations
-        WHERE tenant_id = ${tenantId}::uuid
-        GROUP BY applies_to_transaction_id
+        SELECT a.applies_to_transaction_id AS txn_id, SUM(a.amount_applied) AS paid
+        FROM allocations a
+        JOIN transactions pt ON pt.id = a.payment_transaction_id
+        WHERE a.tenant_id = ${tenantId}::uuid
+          AND pt.transaction_date <= ${asOfDate}::date
+          AND pt.status = 'POSTED'
+        GROUP BY a.applies_to_transaction_id
       ),
       overdue_customers AS (
         SELECT DISTINCT t.customer_id
@@ -179,8 +191,8 @@ export class DashboardService {
     `;
   }
 
-  private queryPayables(tenantId: string, asOfDate: string, overdueThreshold: string) {
-    return this.prisma.$queryRaw<
+  private queryPayables(tx: TxClient, tenantId: string, asOfDate: string, overdueThreshold: string) {
+    return tx.$queryRaw<
       Array<{ supplierCount: number; totalAmount: bigint; overdueCount: number; overdueAmount: bigint }>
     >`
       WITH ap_balances AS (
@@ -196,10 +208,13 @@ export class DashboardService {
         HAVING SUM(CASE WHEN le.entry_type = 'AP_INCREASE' THEN le.amount ELSE -le.amount END) > 0
       ),
       alloc_sums AS (
-        SELECT applies_to_transaction_id AS txn_id, SUM(amount_applied) AS paid
-        FROM allocations
-        WHERE tenant_id = ${tenantId}::uuid
-        GROUP BY applies_to_transaction_id
+        SELECT a.applies_to_transaction_id AS txn_id, SUM(a.amount_applied) AS paid
+        FROM allocations a
+        JOIN transactions pt ON pt.id = a.payment_transaction_id
+        WHERE a.tenant_id = ${tenantId}::uuid
+          AND pt.transaction_date <= ${asOfDate}::date
+          AND pt.status = 'POSTED'
+        GROUP BY a.applies_to_transaction_id
       ),
       overdue_suppliers AS (
         SELECT DISTINCT t.supplier_id
@@ -221,8 +236,8 @@ export class DashboardService {
     `;
   }
 
-  private queryRecentActivity(tenantId: string, asOfDate: string) {
-    return this.prisma.$queryRaw<
+  private queryRecentActivity(tx: TxClient, tenantId: string, asOfDate: string) {
+    return tx.$queryRaw<
       Array<{ todaySales: bigint; todayPurchases: bigint; todayPayments: bigint; todayReceipts: bigint }>
     >`
       SELECT
@@ -245,8 +260,10 @@ export class DashboardService {
     return tenantId;
   }
 
-  private today(): string {
-    return new Date().toISOString().split('T')[0];
+  private async getBusinessDate(tenantId: string): Promise<string> {
+    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
+    const tz = tenant?.timezone ?? 'Asia/Karachi';
+    return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
   }
 
   private subtractDays(dateStr: string, days: number): string {

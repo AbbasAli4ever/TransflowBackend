@@ -14,6 +14,9 @@ import {
   createTestSupplier,
   createTestCustomer,
   createTestProduct,
+  createTestPaymentAccount,
+  createAndPostPurchase,
+  createAndPostSale,
 } from '../helpers/test-factories';
 import { PrismaClient } from '@prisma/client';
 
@@ -438,6 +441,535 @@ describe('Transactions API — Draft & Read (Integration)', () => {
       await request(app.getHttpServer())
         .get('/api/v1/transactions/00000000-0000-0000-0000-000000000001')
         .expect(401);
+    });
+  });
+});
+
+// ─── WAVE 1 — Posting Engine Integrity (Remediation Tests) ───────────────────
+
+describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
+  let app: INestApplication;
+  let prisma: PrismaClient;
+  let token: string;
+  let tenantId: string;
+  let userId: string;
+
+  beforeAll(async () => {
+    await setupTestDatabase();
+    app = await createTestApp({ imports: [AppModule] });
+    prisma = getTestPrismaClient();
+  });
+
+  beforeEach(async () => {
+    await cleanDatabase();
+    const { tenant, user } = await createTenantWithUser(prisma);
+    tenantId = tenant.id;
+    userId = user.id;
+    token = generateTestJWT({ userId, tenantId, email: user.email, role: user.role });
+  });
+
+  afterAll(async () => {
+    await teardownTestDatabase();
+    await app.close();
+  });
+
+  const today = () => new Date().toISOString().split('T')[0];
+
+  // ─── TASK 2.6 — Zero unit cost / price rejected at draft time ───────────────
+
+  describe('Task 2.6 — Zero unit cost/price rejected (DTO validation)', () => {
+    it('rejects PURCHASE draft with unitCost=0 (400)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/transactions/purchases/draft')
+        .set(authHeader(token))
+        .send({
+          supplierId: supplier.id,
+          transactionDate: today(),
+          lines: [{ productId: product.id, quantity: 5, unitCost: 0 }],
+        })
+        .expect(400);
+    });
+
+    it('accepts PURCHASE draft with unitCost=1 (201)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/transactions/purchases/draft')
+        .set(authHeader(token))
+        .send({
+          supplierId: supplier.id,
+          transactionDate: today(),
+          lines: [{ productId: product.id, quantity: 5, unitCost: 1 }],
+        })
+        .expect(201);
+    });
+
+    it('rejects SALE draft with unitPrice=0 (400)', async () => {
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/transactions/sales/draft')
+        .set(authHeader(token))
+        .send({
+          customerId: customer.id,
+          transactionDate: today(),
+          lines: [{ productId: product.id, quantity: 3, unitPrice: 0 }],
+        })
+        .expect(400);
+    });
+  });
+
+  // ─── TASK 2.4 — Duplicate sourceTransactionLineId rejected at draft time ────
+
+  describe('Task 2.4 — Duplicate sourceTransactionLineId rejected in return drafts', () => {
+    it('rejects SUPPLIER_RETURN draft with duplicate sourceTransactionLineId (422)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+
+      const purchase = await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        paidNow: 5000,
+        paymentAccountId: account.id,
+      });
+      const sourceLineId = purchase.transactionLines[0].id;
+
+      await request(app.getHttpServer())
+        .post('/api/v1/transactions/supplier-returns/draft')
+        .set(authHeader(token))
+        .send({
+          supplierId: supplier.id,
+          transactionDate: today(),
+          lines: [
+            { sourceTransactionLineId: sourceLineId, quantity: 3 },
+            { sourceTransactionLineId: sourceLineId, quantity: 2 },
+          ],
+        })
+        .expect(422);
+    });
+
+    it('rejects CUSTOMER_RETURN draft with duplicate sourceTransactionLineId (422)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+      });
+
+      const sale = await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ productId: product.id, quantity: 8, unitPrice: 1000 }],
+      });
+      const sourceLineId = sale.transactionLines[0].id;
+
+      await request(app.getHttpServer())
+        .post('/api/v1/transactions/customer-returns/draft')
+        .set(authHeader(token))
+        .send({
+          customerId: customer.id,
+          transactionDate: today(),
+          lines: [
+            { sourceTransactionLineId: sourceLineId, quantity: 3 },
+            { sourceTransactionLineId: sourceLineId, quantity: 2 },
+          ],
+        })
+        .expect(422);
+    });
+  });
+
+  // ─── TASK 2.5 — returnHandling required for CUSTOMER_RETURN posting ─────────
+
+  describe('Task 2.5 — returnHandling required for CUSTOMER_RETURN posting', () => {
+    it('rejects CUSTOMER_RETURN posting without returnHandling (400)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+      });
+
+      const sale = await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ productId: product.id, quantity: 5, unitPrice: 1000 }],
+      });
+      const sourceLineId = sale.transactionLines[0].id;
+
+      const draftRes = await request(app.getHttpServer())
+        .post('/api/v1/transactions/customer-returns/draft')
+        .set(authHeader(token))
+        .send({
+          customerId: customer.id,
+          transactionDate: today(),
+          lines: [{ sourceTransactionLineId: sourceLineId, quantity: 2 }],
+        })
+        .expect(201);
+
+      // Post without returnHandling
+      await request(app.getHttpServer())
+        .post(`/api/v1/transactions/${draftRes.body.id}/post`)
+        .set(authHeader(token))
+        .send({ idempotencyKey: uuid() })
+        .expect(400);
+    });
+
+    it('accepts CUSTOMER_RETURN posting with STORE_CREDIT (200)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+      });
+
+      const sale = await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ productId: product.id, quantity: 5, unitPrice: 1000 }],
+      });
+      const sourceLineId = sale.transactionLines[0].id;
+
+      const draftRes = await request(app.getHttpServer())
+        .post('/api/v1/transactions/customer-returns/draft')
+        .set(authHeader(token))
+        .send({
+          customerId: customer.id,
+          transactionDate: today(),
+          lines: [{ sourceTransactionLineId: sourceLineId, quantity: 2 }],
+        })
+        .expect(201);
+
+      const postRes = await request(app.getHttpServer())
+        .post(`/api/v1/transactions/${draftRes.body.id}/post`)
+        .set(authHeader(token))
+        .send({ idempotencyKey: uuid(), returnHandling: 'STORE_CREDIT' })
+        .expect(200);
+
+      expect(postRes.body.status).toBe('POSTED');
+    });
+  });
+
+  // ─── TASK 2.1 — Stock check before SUPPLIER_RETURN posting ──────────────────
+
+  describe('Task 2.1 — Stock check before SUPPLIER_RETURN_OUT posting', () => {
+    it('rejects supplier return posting when stock < return qty (422)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      // Purchase 5 units
+      const purchase = await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 5, unitCost: 500 }],
+      });
+
+      // Sell 4 units — only 1 unit left in stock
+      await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ productId: product.id, quantity: 4, unitPrice: 1000 }],
+      });
+
+      const sourceLineId = purchase.transactionLines[0].id;
+
+      // Create a valid return draft for 3 units (3 <= 5 returnable from purchase)
+      const draftRes = await request(app.getHttpServer())
+        .post('/api/v1/transactions/supplier-returns/draft')
+        .set(authHeader(token))
+        .send({
+          supplierId: supplier.id,
+          transactionDate: today(),
+          lines: [{ sourceTransactionLineId: sourceLineId, quantity: 3 }],
+        })
+        .expect(201);
+
+      // Post should fail: only 1 unit in stock but trying to return 3
+      await request(app.getHttpServer())
+        .post(`/api/v1/transactions/${draftRes.body.id}/post`)
+        .set(authHeader(token))
+        .send({ idempotencyKey: uuid() })
+        .expect(422);
+    });
+
+    it('allows supplier return posting when stock >= return qty (200)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      // Purchase 10 units, return 3 — stock is 10, sufficient
+      const purchase = await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+      });
+
+      const sourceLineId = purchase.transactionLines[0].id;
+
+      const draftRes = await request(app.getHttpServer())
+        .post('/api/v1/transactions/supplier-returns/draft')
+        .set(authHeader(token))
+        .send({
+          supplierId: supplier.id,
+          transactionDate: today(),
+          lines: [{ sourceTransactionLineId: sourceLineId, quantity: 3 }],
+        })
+        .expect(201);
+
+      const postRes = await request(app.getHttpServer())
+        .post(`/api/v1/transactions/${draftRes.body.id}/post`)
+        .set(authHeader(token))
+        .send({ idempotencyKey: uuid() })
+        .expect(200);
+
+      expect(postRes.body.status).toBe('POSTED');
+    });
+  });
+
+  // ─── TASK 2.2 — Stock check before ADJUSTMENT_OUT posting ───────────────────
+
+  describe('Task 2.2 — Stock check before ADJUSTMENT_OUT posting', () => {
+    it('rejects ADJUSTMENT_OUT posting when stock < adjustment qty (422)', async () => {
+      const product = await createTestProduct(prisma, tenantId, userId);
+      // Product has 0 stock — trying to adjust out 5 should fail
+
+      const draftRes = await request(app.getHttpServer())
+        .post('/api/v1/transactions/adjustments/draft')
+        .set(authHeader(token))
+        .send({
+          transactionDate: today(),
+          lines: [{ productId: product.id, quantity: 5, direction: 'OUT', reason: 'damaged goods' }],
+        })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/transactions/${draftRes.body.id}/post`)
+        .set(authHeader(token))
+        .send({ idempotencyKey: uuid() })
+        .expect(422);
+    });
+
+    it('allows ADJUSTMENT_OUT posting when stock >= adjustment qty (200)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      // Purchase 10 units to build up stock
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+      });
+
+      const draftRes = await request(app.getHttpServer())
+        .post('/api/v1/transactions/adjustments/draft')
+        .set(authHeader(token))
+        .send({
+          transactionDate: today(),
+          lines: [{ productId: product.id, quantity: 5, direction: 'OUT', reason: 'damaged goods' }],
+        })
+        .expect(201);
+
+      const postRes = await request(app.getHttpServer())
+        .post(`/api/v1/transactions/${draftRes.body.id}/post`)
+        .set(authHeader(token))
+        .send({ idempotencyKey: uuid() })
+        .expect(200);
+
+      expect(postRes.body.status).toBe('POSTED');
+    });
+
+    it('allows ADJUSTMENT_IN posting regardless of current stock (200)', async () => {
+      const product = await createTestProduct(prisma, tenantId, userId);
+      // No stock — but adjustment IN should always be allowed
+
+      const draftRes = await request(app.getHttpServer())
+        .post('/api/v1/transactions/adjustments/draft')
+        .set(authHeader(token))
+        .send({
+          transactionDate: today(),
+          lines: [{ productId: product.id, quantity: 5, direction: 'IN', reason: 'found stock' }],
+        })
+        .expect(201);
+
+      const postRes = await request(app.getHttpServer())
+        .post(`/api/v1/transactions/${draftRes.body.id}/post`)
+        .set(authHeader(token))
+        .send({ idempotencyKey: uuid() })
+        .expect(200);
+
+      expect(postRes.body.status).toBe('POSTED');
+    });
+  });
+
+  // ─── TASK 2.3 — Role check: only OWNER/ADMIN can post adjustments ────────────
+
+  describe('Task 2.3 — Role guard on ADJUSTMENT posting', () => {
+    it('rejects ADJUSTMENT posting by STAFF role (403)', async () => {
+      // Create STAFF user in the same tenant
+      const staffUser = await prisma.user.create({
+        data: {
+          id: uuid(),
+          tenantId,
+          fullName: 'Staff User',
+          email: `staff-${uuid().substring(0, 8)}@test.com`,
+          passwordHash: 'hash',
+          role: 'STAFF',
+          status: 'ACTIVE',
+        },
+      });
+      const staffToken = generateTestJWT({
+        userId: staffUser.id,
+        tenantId,
+        email: staffUser.email,
+        role: 'STAFF',
+      });
+
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+
+      // Build some stock first (using owner token)
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+      });
+
+      // Admin creates the draft (owner token)
+      const draftRes = await request(app.getHttpServer())
+        .post('/api/v1/transactions/adjustments/draft')
+        .set(authHeader(token))
+        .send({
+          transactionDate: today(),
+          lines: [{ productId: product.id, quantity: 3, direction: 'OUT', reason: 'damaged' }],
+        })
+        .expect(201);
+
+      // Staff user tries to post — should be forbidden
+      await request(app.getHttpServer())
+        .post(`/api/v1/transactions/${draftRes.body.id}/post`)
+        .set(authHeader(staffToken))
+        .send({ idempotencyKey: uuid() })
+        .expect(403);
+    });
+
+    it('allows ADJUSTMENT posting by OWNER role (200)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+      });
+
+      const draftRes = await request(app.getHttpServer())
+        .post('/api/v1/transactions/adjustments/draft')
+        .set(authHeader(token))
+        .send({
+          transactionDate: today(),
+          lines: [{ productId: product.id, quantity: 3, direction: 'OUT', reason: 'damaged' }],
+        })
+        .expect(201);
+
+      const postRes = await request(app.getHttpServer())
+        .post(`/api/v1/transactions/${draftRes.body.id}/post`)
+        .set(authHeader(token))
+        .send({ idempotencyKey: uuid() })
+        .expect(200);
+
+      expect(postRes.body.status).toBe('POSTED');
+    });
+  });
+
+  // ─── TASK 2.7 — Revalidate entity status at payment posting time ─────────────
+
+  describe('Task 2.7 — Entity active-status revalidation at posting time', () => {
+    it('rejects SUPPLIER_PAYMENT posting when supplier is deactivated after draft (400)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      // Build AP balance first
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 5, unitCost: 1000 }],
+      });
+
+      // Create supplier payment draft
+      const draftRes = await request(app.getHttpServer())
+        .post('/api/v1/transactions/supplier-payments/draft')
+        .set(authHeader(token))
+        .send({ supplierId: supplier.id, amount: 2000, paymentAccountId: account.id, transactionDate: today() })
+        .expect(201);
+
+      // Deactivate supplier between draft and post
+      await prisma.supplier.update({ where: { id: supplier.id }, data: { status: 'INACTIVE' } });
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/transactions/${draftRes.body.id}/post`)
+        .set(authHeader(token))
+        .send({ idempotencyKey: uuid() })
+        .expect(400);
+    });
+
+    it('rejects SUPPLIER_PAYMENT posting when payment account is deactivated after draft (400)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 5, unitCost: 1000 }],
+      });
+
+      const draftRes = await request(app.getHttpServer())
+        .post('/api/v1/transactions/supplier-payments/draft')
+        .set(authHeader(token))
+        .send({ supplierId: supplier.id, amount: 2000, paymentAccountId: account.id, transactionDate: today() })
+        .expect(201);
+
+      // Deactivate payment account between draft and post
+      await prisma.paymentAccount.update({ where: { id: account.id }, data: { status: 'INACTIVE' } });
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/transactions/${draftRes.body.id}/post`)
+        .set(authHeader(token))
+        .send({ idempotencyKey: uuid() })
+        .expect(400);
+    });
+
+    it('rejects CUSTOMER_PAYMENT posting when customer is deactivated after draft (400)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+      });
+
+      await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ productId: product.id, quantity: 5, unitPrice: 1000 }],
+      });
+
+      const draftRes = await request(app.getHttpServer())
+        .post('/api/v1/transactions/customer-payments/draft')
+        .set(authHeader(token))
+        .send({ customerId: customer.id, amount: 2000, paymentAccountId: account.id, transactionDate: today() })
+        .expect(201);
+
+      // Deactivate customer between draft and post
+      await prisma.customer.update({ where: { id: customer.id }, data: { status: 'INACTIVE' } });
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/transactions/${draftRes.body.id}/post`)
+        .set(authHeader(token))
+        .send({ idempotencyKey: uuid() })
+        .expect(400);
     });
   });
 });

@@ -13,7 +13,7 @@ export class SaleLineDto {
 
   @ApiProperty({ example: 15000, description: 'Unit price in PKR (integer)' })
   @IsInt()
-  @Min(0)
+  @Min(1)
   unitPrice!: number;
 
   @ApiPropertyOptional({ example: 0, description: 'Discount amount in PKR (integer)' })

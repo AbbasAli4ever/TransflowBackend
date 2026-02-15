@@ -62,6 +62,11 @@ export class ImportsService {
       throw new BadRequestException('Unsupported file type. Only CSV and XLSX files are allowed');
     }
 
+    // Task 7.5: validate MIME type to prevent content-type spoofing
+    if (file.mimetype && !ALLOWED_MIMETYPES.includes(file.mimetype)) {
+      throw new BadRequestException('Unsupported file MIME type');
+    }
+
     const isCsv = ext === '.csv';
     const isXlsx = ext === '.xlsx' || ext === '.xls';
 
@@ -172,6 +177,15 @@ export class ImportsService {
     const preview: Array<{ rowNumber: number; data: Record<string, string>; status: string }> = [];
 
     await this.prisma.$transaction(async (tx) => {
+      // CAS: atomically claim the PENDING_MAPPING → VALIDATED transition
+      const { count } = await tx.importBatch.updateMany({
+        where: { id: batchId, tenantId, status: 'PENDING_MAPPING' },
+        data: { status: 'VALIDATED' },
+      });
+      if (count === 0) {
+        throw new ConflictException('Batch is no longer in PENDING_MAPPING state');
+      }
+
       for (let i = 0; i < mappedRows.length; i++) {
         const r = mappedRows[i];
         const result = validationResults[i];
@@ -199,11 +213,6 @@ export class ImportsService {
           preview.push({ rowNumber: r.rowNumber, data: r.mappedData, status: newStatus });
         }
       }
-
-      await tx.importBatch.update({
-        where: { id: batchId },
-        data: { status: 'VALIDATED' },
-      });
     });
 
     const validRows = mappedRows.length - errors.length;
@@ -251,28 +260,34 @@ export class ImportsService {
       );
     }
 
-    // Mark batch as PROCESSING before beginning
-    await this.prisma.importBatch.update({
-      where: { id: batchId },
-      data: { status: 'PROCESSING' },
-    });
-
     const createdRecords: Array<{ rowNumber: number; recordId: string; recordType: string }> = [];
     let successCount = 0;
     let failedCount = 0;
 
     await this.prisma.$transaction(async (tx) => {
+      // Task 7.2: CAS — atomically claim the VALIDATED → PROCESSING transition
+      const { count: claimed } = await tx.importBatch.updateMany({
+        where: { id: batchId, tenantId, status: 'VALIDATED' },
+        data: { status: 'PROCESSING' },
+      });
+      if (claimed === 0) {
+        throw new ConflictException('Batch is no longer in VALIDATED state');
+      }
+
       for (const row of validRows) {
         const data = row.rawDataJson as Record<string, string>;
         let recordId: string | null = null;
         let recordType: string | null = null;
         let failReason: string | null = null;
+        let updatedRawData: Record<string, unknown> | null = null;
 
         try {
           if (batch.module === 'SUPPLIERS') {
             const name = data['name']?.trim();
+            // Use findFirst inside the tx (case-insensitive) — P2002 cannot be caught inside
+            // a $transaction without aborting the PostgreSQL transaction.
             const existing = await tx.supplier.findFirst({
-              where: { tenantId, name, status: 'ACTIVE' },
+              where: { tenantId, name: { equals: name, mode: 'insensitive' } },
               select: { id: true },
             });
             if (existing) {
@@ -294,7 +309,7 @@ export class ImportsService {
           } else if (batch.module === 'CUSTOMERS') {
             const name = data['name']?.trim();
             const existing = await tx.customer.findFirst({
-              where: { tenantId, name, status: 'ACTIVE' },
+              where: { tenantId, name: { equals: name, mode: 'insensitive' } },
               select: { id: true },
             });
             if (existing) {
@@ -316,17 +331,13 @@ export class ImportsService {
           } else if (batch.module === 'PRODUCTS') {
             const name = data['name']?.trim();
             const sku = data['sku']?.trim() || null;
-
             if (sku) {
               const existing = await tx.product.findFirst({
-                where: { tenantId, sku, status: 'ACTIVE' },
+                where: { tenantId, sku: { equals: sku, mode: 'insensitive' } },
                 select: { id: true },
               });
-              if (existing) {
-                failReason = 'Duplicate SKU';
-              }
+              if (existing) failReason = 'Duplicate SKU';
             }
-
             if (!failReason) {
               const created = await tx.product.create({
                 data: {
@@ -344,9 +355,10 @@ export class ImportsService {
           } else if (batch.module === 'OPENING_BALANCES') {
             const accountName = data['accountName']?.trim();
             const amount = parseInt(data['amount'], 10);
+            // Task 7.3: fetch current value before overwriting so rollback can restore it
             const account = await tx.paymentAccount.findFirst({
               where: { tenantId, name: accountName, status: 'ACTIVE' },
-              select: { id: true },
+              select: { id: true, openingBalance: true },
             });
             if (!account) {
               failReason = `Payment account "${accountName}" not found`;
@@ -355,12 +367,17 @@ export class ImportsService {
                 where: { id: account.id },
                 data: { openingBalance: amount },
               });
+              // Task 7.3: embed previousOpeningBalance in rawDataJson for rollback restoration
+              updatedRawData = {
+                ...(row.rawDataJson as Record<string, unknown>),
+                previousOpeningBalance: account.openingBalance,
+              };
               recordId = account.id;
               recordType = 'PAYMENT_ACCOUNT';
             }
           }
         } catch (err: any) {
-          failReason = err.message ?? 'Unknown error';
+          if (!failReason) failReason = err.message ?? 'Unknown error';
         }
 
         if (failReason) {
@@ -372,7 +389,12 @@ export class ImportsService {
         } else {
           await tx.importRow.update({
             where: { id: row.id },
-            data: { status: 'SUCCESS', createdRecordId: recordId, createdRecordType: recordType },
+            data: {
+              status: 'SUCCESS',
+              createdRecordId: recordId,
+              createdRecordType: recordType,
+              ...(updatedRawData ? { rawDataJson: updatedRawData as any } : {}),
+            },
           });
           successCount++;
           if (recordId && recordType) {
@@ -416,6 +438,7 @@ export class ImportsService {
       throw new BadRequestException(`Batch must be in COMPLETED status, got ${batch.status}`);
     }
 
+    // Pre-fetch success rows (needed for dependency checking inside tx)
     const successRows = await this.prisma.importRow.findMany({
       where: {
         importBatchId: batchId,
@@ -423,58 +446,77 @@ export class ImportsService {
         status: 'SUCCESS',
         NOT: { createdRecordId: null },
       },
+      orderBy: { rowNumber: 'asc' },
     });
-
-    // Dependency check before modifying anything
-    for (const row of successRows) {
-      const recordId = row.createdRecordId!;
-      const recordType = row.createdRecordType;
-
-      if (recordType === 'SUPPLIER') {
-        const count = await this.prisma.transaction.count({ where: { tenantId, supplierId: recordId } });
-        if (count > 0) throw new ConflictException('Cannot rollback: records have dependencies');
-      } else if (recordType === 'CUSTOMER') {
-        const count = await this.prisma.transaction.count({ where: { tenantId, customerId: recordId } });
-        if (count > 0) throw new ConflictException('Cannot rollback: records have dependencies');
-      } else if (recordType === 'PRODUCT') {
-        const count = await this.prisma.transactionLine.count({ where: { tenantId, productId: recordId } });
-        if (count > 0) throw new ConflictException('Cannot rollback: records have dependencies');
-      } else if (recordType === 'PAYMENT_ACCOUNT') {
-        const count = await this.prisma.paymentEntry.count({ where: { tenantId, paymentAccountId: recordId } });
-        if (count > 0) throw new ConflictException('Cannot rollback: records have dependencies');
-      }
-    }
 
     let rolledBackCount = 0;
 
-    await this.prisma.$transaction(async (tx) => {
-      for (const row of successRows) {
-        const recordId = row.createdRecordId!;
-        const recordType = row.createdRecordType;
+    // Task 7.4: dependency check + rollback mutations in a single Serializable transaction
+    await this.prisma.$transaction(
+      async (tx) => {
+        // Dependency check (now inside the transaction — eliminates TOCTOU)
+        for (const row of successRows) {
+          const recordId = row.createdRecordId!;
+          const recordType = row.createdRecordType;
 
-        if (recordType === 'SUPPLIER') {
-          await tx.supplier.update({ where: { id: recordId }, data: { status: 'INACTIVE' } });
-        } else if (recordType === 'CUSTOMER') {
-          await tx.customer.update({ where: { id: recordId }, data: { status: 'INACTIVE' } });
-        } else if (recordType === 'PRODUCT') {
-          await tx.product.update({ where: { id: recordId }, data: { status: 'INACTIVE' } });
-        } else if (recordType === 'PAYMENT_ACCOUNT') {
-          await tx.paymentAccount.update({ where: { id: recordId }, data: { openingBalance: 0 } });
+          if (recordType === 'SUPPLIER') {
+            const count = await tx.transaction.count({ where: { tenantId, supplierId: recordId } });
+            if (count > 0) throw new ConflictException('Cannot rollback: records have dependencies');
+          } else if (recordType === 'CUSTOMER') {
+            const count = await tx.transaction.count({ where: { tenantId, customerId: recordId } });
+            if (count > 0) throw new ConflictException('Cannot rollback: records have dependencies');
+          } else if (recordType === 'PRODUCT') {
+            const count = await tx.transactionLine.count({ where: { tenantId, productId: recordId } });
+            if (count > 0) throw new ConflictException('Cannot rollback: records have dependencies');
+          } else if (recordType === 'PAYMENT_ACCOUNT') {
+            const count = await tx.paymentEntry.count({ where: { tenantId, paymentAccountId: recordId } });
+            if (count > 0) throw new ConflictException('Cannot rollback: records have dependencies');
+          }
         }
 
-        await tx.importRow.update({
-          where: { id: row.id },
-          data: { status: 'VALID', createdRecordId: null, createdRecordType: null },
+        // Task 7.3: for opening-balance rows, process in REVERSE rowNumber order so that
+        // if the same account appears multiple times, we restore to the true original value.
+        const orderedRows = [...successRows].sort((a, b) => b.rowNumber - a.rowNumber);
+        // Track which accounts have already been restored to avoid double-restoration
+        const restoredAccountIds = new Set<string>();
+
+        for (const row of orderedRows) {
+          const recordId = row.createdRecordId!;
+          const recordType = row.createdRecordType;
+
+          if (recordType === 'SUPPLIER') {
+            await tx.supplier.update({ where: { id: recordId, tenantId }, data: { status: 'INACTIVE' } });
+          } else if (recordType === 'CUSTOMER') {
+            await tx.customer.update({ where: { id: recordId, tenantId }, data: { status: 'INACTIVE' } });
+          } else if (recordType === 'PRODUCT') {
+            await tx.product.update({ where: { id: recordId, tenantId }, data: { status: 'INACTIVE' } });
+          } else if (recordType === 'PAYMENT_ACCOUNT' && !restoredAccountIds.has(recordId)) {
+            // Restore to the previousOpeningBalance stored at commit time for this account.
+            // First occurrence in reverse order = the row that originally held the pre-import value.
+            const rawData = row.rawDataJson as Record<string, unknown>;
+            const previousBalance = rawData.previousOpeningBalance as number ?? 0;
+            await tx.paymentAccount.update({
+              where: { id: recordId, tenantId },
+              data: { openingBalance: previousBalance },
+            });
+            restoredAccountIds.add(recordId);
+          }
+
+          await tx.importRow.update({
+            where: { id: row.id, tenantId },
+            data: { status: 'VALID', createdRecordId: null, createdRecordType: null },
+          });
+
+          rolledBackCount++;
+        }
+
+        await tx.importBatch.update({
+          where: { id: batchId, tenantId },
+          data: { status: 'ROLLED_BACK' },
         });
-
-        rolledBackCount++;
-      }
-
-      await tx.importBatch.update({
-        where: { id: batchId },
-        data: { status: 'ROLLED_BACK' },
-      });
-    });
+      },
+      { isolationLevel: 'Serializable' },
+    );
 
     return {
       id: batchId,

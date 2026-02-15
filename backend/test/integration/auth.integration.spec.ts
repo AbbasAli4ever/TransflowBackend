@@ -270,7 +270,7 @@ describe('Auth API (Integration)', () => {
         })
         .expect(401);
 
-      expect(response.body.message).toContain('Invalid credentials');
+      expect(response.body.message).toContain('Authentication failed');
     });
 
     it('should reject login with invalid password', async () => {
@@ -282,7 +282,7 @@ describe('Auth API (Integration)', () => {
         })
         .expect(401);
 
-      expect(response.body.message).toContain('Invalid credentials');
+      expect(response.body.message).toContain('Authentication failed');
     });
 
     it('should handle case-insensitive email login', async () => {
@@ -311,9 +311,9 @@ describe('Auth API (Integration)', () => {
       const response = await request(app.getHttpServer())
         .post('/api/v1/auth/login')
         .send(userCredentials)
-        .expect(403);
+        .expect(401);
 
-      expect(response.body.message).toContain('Account inactive');
+      expect(response.body.message).toContain('Authentication failed');
     });
 
     it('should reject login for inactive tenant', async () => {
@@ -330,9 +330,9 @@ describe('Auth API (Integration)', () => {
       const response = await request(app.getHttpServer())
         .post('/api/v1/auth/login')
         .send(userCredentials)
-        .expect(403);
+        .expect(401);
 
-      expect(response.body.message).toContain('Tenant inactive');
+      expect(response.body.message).toContain('Authentication failed');
     });
   });
 
@@ -394,6 +394,86 @@ describe('Auth API (Integration)', () => {
 
       expect(finalUserCount).toBe(initialUserCount + 1);
       expect(finalTenantCount).toBe(initialTenantCount + 1);
+    });
+  });
+
+  describe('POST /api/v1/auth/refresh', () => {
+    beforeEach(async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send({ tenantName: 'Refresh Test', fullName: 'John Doe', email: 'john@example.com', password: 'Test123!' });
+    });
+
+    it('returns a new access token for a valid refresh token', async () => {
+      const loginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: 'john@example.com', password: 'Test123!' })
+        .expect(200);
+
+      const { refreshToken } = loginRes.body;
+
+      const refreshRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken })
+        .expect(200);
+
+      expect(refreshRes.body.accessToken).toBeDefined();
+      expect(refreshRes.body.accessToken).toMatch(/^[\w-]+\.[\w-]+\.[\w-]+$/);
+    });
+
+    it('returns 401 for an invalid token', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken: 'not.a.valid.jwt' })
+        .expect(401);
+    });
+
+    it('returns 401 after logout (revoked token)', async () => {
+      const loginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: 'john@example.com', password: 'Test123!' })
+        .expect(200);
+
+      const { refreshToken } = loginRes.body;
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/logout')
+        .send({ refreshToken })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken })
+        .expect(401);
+    });
+  });
+
+  describe('POST /api/v1/auth/logout', () => {
+    beforeEach(async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send({ tenantName: 'Logout Test', fullName: 'John Doe', email: 'john@example.com', password: 'Test123!' });
+    });
+
+    it('revokes the refresh token', async () => {
+      const loginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: 'john@example.com', password: 'Test123!' })
+        .expect(200);
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/logout')
+        .send({ refreshToken: loginRes.body.refreshToken })
+        .expect(200);
+
+      expect(res.body.message).toBe('Logged out');
+    });
+
+    it('returns 200 even for an unknown token (idempotent)', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/logout')
+        .send({ refreshToken: 'unknown-token-that-doesnt-exist' })
+        .expect(200);
     });
   });
 });

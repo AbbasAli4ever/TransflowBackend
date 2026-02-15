@@ -15,9 +15,11 @@ import { StatementQueryDto } from './dto/statement-query.dto';
 import { PendingReceivablesQueryDto } from './dto/pending-receivables-query.dto';
 import { PendingPayablesQueryDto } from './dto/pending-payables-query.dto';
 import { ApiErrorResponse } from '../common/swagger/api-error-response.dto';
+import { Roles } from '../common/decorators/roles.decorator';
 
 @ApiTags('Reports')
 @ApiBearerAuth('bearer')
+@Roles('OWNER', 'ADMIN')
 @Controller('reports')
 export class ReportsController {
   constructor(private reportsService: ReportsService) {}

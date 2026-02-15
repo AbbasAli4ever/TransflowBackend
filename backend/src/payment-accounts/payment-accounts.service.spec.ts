@@ -20,13 +20,18 @@ describe('PaymentAccountsService', () => {
         create: jest.fn(),
         update: jest.fn(),
       },
+      statusChangeLog: { create: jest.fn() },
+      $queryRaw: jest.fn().mockResolvedValue([{ balance: 0n }]),
+      $transaction: jest.fn().mockImplementation((args: any[]) =>
+        Promise.all(args.map((op: any) => (typeof op?.then === 'function' ? op : Promise.resolve(op))))
+      ),
     };
 
     service = new PaymentAccountsService(prisma as PrismaService);
   });
 
   describe('create', () => {
-    it('creates payment account and returns with _computed', async () => {
+    it('creates payment account without _computed', async () => {
       prisma.paymentAccount.create.mockResolvedValue({
         id: 'acct-1',
         tenantId: 'tenant-1',
@@ -43,10 +48,7 @@ describe('PaymentAccountsService', () => {
 
       expect(result.name).toBe('Main Cash');
       expect(result.type).toBe('CASH');
-      expect(result._computed).toBeDefined();
-      expect(result._computed.currentBalance).toBe(0);
-      expect(result._computed.totalIn).toBe(0);
-      expect(result._computed.totalOut).toBe(0);
+      expect(result).not.toHaveProperty('_computed');
     });
 
     it('throws ConflictException on duplicate name (P2002)', async () => {
@@ -91,7 +93,7 @@ describe('PaymentAccountsService', () => {
       await expect(service.findOne('nonexistent')).rejects.toBeInstanceOf(NotFoundException);
     });
 
-    it('returns account with _computed', async () => {
+    it('returns account without _computed', async () => {
       prisma.paymentAccount.findFirst.mockResolvedValue({
         id: 'acct-1', name: 'Main Cash', type: 'CASH', tenantId: 'tenant-1',
       });
@@ -99,7 +101,7 @@ describe('PaymentAccountsService', () => {
       const result = await service.findOne('acct-1');
 
       expect(result.name).toBe('Main Cash');
-      expect(result._computed).toBeDefined();
+      expect(result).not.toHaveProperty('_computed');
     });
   });
 

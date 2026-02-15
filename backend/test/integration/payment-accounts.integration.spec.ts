@@ -48,8 +48,7 @@ describe('Payment Accounts API (Integration)', () => {
       expect(response.body.name).toBe('Main Cash');
       expect(response.body.type).toBe('CASH');
       expect(response.body.openingBalance).toBe(0);
-      expect(response.body._computed).toBeDefined();
-      expect(response.body._computed.currentBalance).toBe(0);
+      expect(response.body).not.toHaveProperty('_computed');
     });
 
     it('creates account with opening balance', async () => {
@@ -158,7 +157,7 @@ describe('Payment Accounts API (Integration)', () => {
         .expect(200);
 
       expect(response.body.id).toBe(account.id);
-      expect(response.body._computed).toBeDefined();
+      expect(response.body).not.toHaveProperty('_computed');
     });
 
     it('returns 404 for cross-tenant access', async () => {

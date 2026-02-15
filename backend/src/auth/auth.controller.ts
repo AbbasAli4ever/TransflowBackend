@@ -2,7 +2,6 @@ import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiForbiddenResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
@@ -12,6 +11,7 @@ import {
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { ApiErrorResponse } from '../common/swagger/api-error-response.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
@@ -37,9 +37,28 @@ export class AuthController {
   @ApiOperation({ summary: 'Authenticate user and return tokens' })
   @ApiOkResponse({ description: 'Login successful', type: AuthResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
-  @ApiUnauthorizedResponse({ description: 'Invalid credentials', type: ApiErrorResponse })
-  @ApiForbiddenResponse({ description: 'Account or tenant inactive', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Authentication failed', type: ApiErrorResponse })
   async login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+
+  @Public()
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Exchange a refresh token for a new access token' })
+  @ApiOkResponse({ description: 'New access token issued', schema: { properties: { accessToken: { type: 'string' } } } })
+  @ApiUnauthorizedResponse({ description: 'Invalid or expired refresh token', type: ApiErrorResponse })
+  async refresh(@Body() dto: RefreshTokenDto) {
+    return this.authService.refresh(dto.refreshToken);
+  }
+
+  @Public()
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Revoke a refresh token' })
+  @ApiOkResponse({ description: 'Token revoked' })
+  async logout(@Body() dto: RefreshTokenDto) {
+    await this.authService.logout(dto.refreshToken);
+    return { message: 'Logged out' };
   }
 }

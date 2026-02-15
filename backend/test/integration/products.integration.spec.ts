@@ -46,8 +46,7 @@ describe('Products API (Integration)', () => {
         .expect(201);
 
       expect(response.body.name).toBe('Widget');
-      expect(response.body._computed).toBeDefined();
-      expect(response.body._computed.currentStock).toBe(0);
+      expect(response.body).not.toHaveProperty('_computed');
     });
 
     it('creates a product with SKU (uppercased)', async () => {
@@ -152,7 +151,7 @@ describe('Products API (Integration)', () => {
         .expect(200);
 
       expect(response.body.id).toBe(product.id);
-      expect(response.body._computed).toBeDefined();
+      expect(response.body).not.toHaveProperty('_computed');
     });
 
     it('returns 404 for cross-tenant access', async () => {
@@ -203,6 +202,25 @@ describe('Products API (Integration)', () => {
         .expect(200);
 
       expect(response.body.status).toBe('INACTIVE');
+    });
+  });
+
+  // ─── Wave 3 — SKU case-insensitive uniqueness ────────────────────────────────
+
+  describe('Wave 3 — SKU uniqueness constraint (Task 3.1)', () => {
+    it('rejects duplicate SKU case-insensitively (via DB unique index)', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/products')
+        .set(authHeader(token))
+        .send({ name: 'Widget A', sku: 'SKU-001' })
+        .expect(201);
+
+      // Same SKU, different case — DB unique index on lower(sku) catches this
+      await request(app.getHttpServer())
+        .post('/api/v1/products')
+        .set(authHeader(token))
+        .send({ name: 'Widget B', sku: 'sku-001' })
+        .expect(409);
     });
   });
 });

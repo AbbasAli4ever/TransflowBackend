@@ -1,9 +1,9 @@
-import { IsDateString, IsOptional } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsOptional, Matches } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class DashboardQueryDto {
-  @ApiProperty({ required: false, example: '2026-02-15', description: 'Point-in-time date (defaults to today)' })
+  @ApiPropertyOptional({ example: '2026-02-15', description: 'Point-in-time date (defaults to today)' })
   @IsOptional()
-  @IsDateString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'asOfDate must be in YYYY-MM-DD format' })
   asOfDate?: string;
 }

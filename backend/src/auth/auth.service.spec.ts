@@ -25,11 +25,17 @@ describe('AuthService', () => {
       tenant: {
         create: jest.fn(),
       },
+      refreshToken: {
+        create: jest.fn(),
+        findUnique: jest.fn(),
+        updateMany: jest.fn(),
+      },
       $transaction: jest.fn(),
     };
 
     jwt = {
       signAsync: jest.fn(async () => 'token'),
+      verifyAsync: jest.fn(),
     };
 
     config = {
@@ -43,8 +49,9 @@ describe('AuthService', () => {
     service = new AuthService(prisma as PrismaService, jwt as JwtService, config as ConfigService);
   });
 
-  it('register throws on duplicate email', async () => {
-    prisma.user.findFirst.mockResolvedValue({ id: 'user-1' } as any);
+  it('register throws on duplicate email (P2002 from DB constraint)', async () => {
+    const p2002 = Object.assign(new Error('Unique constraint'), { code: 'P2002' });
+    prisma.$transaction.mockRejectedValue(p2002);
 
     await expect(
       service.register({
@@ -57,8 +64,6 @@ describe('AuthService', () => {
   });
 
   it('register creates tenant and user', async () => {
-    prisma.user.findFirst.mockResolvedValue(null as any);
-
     const txMock = {
       tenant: {
         create: jest.fn().mockResolvedValue({ id: 'tenant-1', name: 'Tenant' }),
@@ -75,6 +80,7 @@ describe('AuthService', () => {
     } as any;
 
     prisma.$transaction.mockImplementation(async (fn: any) => fn(txMock));
+    prisma.refreshToken.create.mockResolvedValue({});
 
     const result = await service.register({
       tenantName: 'Tenant',
@@ -87,11 +93,63 @@ describe('AuthService', () => {
     expect(jwt.signAsync).toHaveBeenCalled();
   });
 
-  it('login rejects invalid credentials', async () => {
+  it('login rejects with Authentication failed when user not found', async () => {
     prisma.user.findFirst.mockResolvedValue(null as any);
 
     await expect(
       service.login({ email: 'user@example.com', password: 'bad' }),
     ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('login rejects with Authentication failed for invalid password', async () => {
+    prisma.user.findFirst.mockResolvedValue({
+      id: 'user-1', tenantId: 'tenant-1', email: 'user@example.com',
+      passwordHash: 'hashed', status: 'ACTIVE', role: 'OWNER',
+      tenant: { id: 'tenant-1', status: 'ACTIVE' },
+    } as any);
+
+    await expect(
+      service.login({ email: 'user@example.com', password: 'wrong-password' }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('login rejects with Authentication failed for inactive user', async () => {
+    prisma.user.findFirst.mockResolvedValue({
+      id: 'user-1', tenantId: 'tenant-1', email: 'user@example.com',
+      passwordHash: 'hashed', status: 'INACTIVE', role: 'OWNER',
+      tenant: { id: 'tenant-1', status: 'ACTIVE' },
+    } as any);
+
+    await expect(
+      service.login({ email: 'user@example.com', password: 'valid-password' }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  describe('refresh', () => {
+    it('rejects invalid JWT signature', async () => {
+      jwt.verifyAsync.mockRejectedValue(new Error('invalid token'));
+      await expect(service.refresh('bad-token')).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it('rejects revoked token', async () => {
+      jwt.verifyAsync.mockResolvedValue({ userId: 'u1', tenantId: 't1', email: 'e', role: 'OWNER' });
+      prisma.refreshToken.findUnique.mockResolvedValue({ revokedAt: new Date(), expiresAt: new Date(Date.now() + 1000) });
+      await expect(service.refresh('valid-but-revoked')).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it('issues new access token for valid token', async () => {
+      jwt.verifyAsync.mockResolvedValue({ userId: 'u1', tenantId: 't1', email: 'e', role: 'OWNER' });
+      prisma.refreshToken.findUnique.mockResolvedValue({ revokedAt: null, expiresAt: new Date(Date.now() + 86400000) });
+      const result = await service.refresh('valid-token');
+      expect(result.accessToken).toBe('token');
+    });
+  });
+
+  describe('logout', () => {
+    it('revokes the refresh token', async () => {
+      prisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+      await service.logout('some-token');
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalled();
+    });
   });
 });

@@ -3,10 +3,12 @@ import {
   UnauthorizedException,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { getContext } from '../common/request-context';
 import { paginateResponse } from '../common/utils/paginate';
+import { safeMoney } from '../common/utils/money';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ListProductsQueryDto } from './dto/list-products-query.dto';
@@ -25,7 +27,7 @@ export class ProductsService {
       const product = await this.prisma.product.create({
         data: { tenantId, createdBy, ...dto },
       });
-      return this.withComputed(product);
+      return product;
     } catch (err: any) {
       if (err.code === 'P2002') throw new ConflictException('SKU already exists for this tenant');
       throw err;
@@ -67,7 +69,7 @@ export class ProductsService {
       this.prisma.product.count({ where }),
     ]);
 
-    return paginateResponse(products.map(p => this.withComputed(p)), total, page, limit);
+    return paginateResponse(products, total, page, limit);
   }
 
   async findOne(id: string) {
@@ -79,7 +81,7 @@ export class ProductsService {
     });
     if (!product) throw new NotFoundException('Product not found');
 
-    return this.withComputed(product);
+    return product;
   }
 
   async update(id: string, dto: UpdateProductDto) {
@@ -96,7 +98,7 @@ export class ProductsService {
         where: { id, tenantId },
         data: dto,
       });
-      return this.withComputed(updated);
+      return updated;
     } catch (err: any) {
       if (err.code === 'P2002') throw new ConflictException('SKU already exists for this tenant');
       throw err;
@@ -112,12 +114,37 @@ export class ProductsService {
     });
     if (!existing) throw new NotFoundException('Product not found');
 
-    const updated = await this.prisma.product.update({
-      where: { id, tenantId },
-      data: { status: dto.status },
-    });
+    // Task 6.2: block deactivation when product has positive stock
+    if (dto.status === 'INACTIVE') {
+      const stockRows = await this.prisma.$queryRaw<Array<{ stock: bigint }>>`
+        SELECT COALESCE(SUM(CASE
+          WHEN movement_type IN ('PURCHASE_IN', 'CUSTOMER_RETURN_IN', 'ADJUSTMENT_IN') THEN quantity
+          ELSE -quantity
+        END), 0)::bigint AS stock
+        FROM inventory_movements
+        WHERE tenant_id = ${tenantId}::uuid AND product_id = ${id}::uuid
+      `;
+      if (safeMoney(stockRows[0]?.stock) > 0) {
+        throw new BadRequestException('Cannot deactivate product with positive stock');
+      }
+    }
 
-    return this.withComputed(updated);
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.product.update({ where: { id, tenantId }, data: { status: dto.status } }),
+      this.prisma.statusChangeLog.create({
+        data: {
+          tenantId,
+          entityType: 'PRODUCT',
+          entityId: id,
+          actorUserId: getContext()?.userId ?? null,
+          previousStatus: existing.status,
+          newStatus: dto.status,
+          reason: dto.reason ?? null,
+        },
+      }),
+    ]);
+
+    return updated;
   }
 
   async getStock(id: string) {
@@ -141,21 +168,9 @@ export class ProductsService {
     return {
       productId: id,
       productName: product.name,
-      currentStock: Number(result[0]?.stock ?? 0),
+      currentStock: safeMoney(result[0]?.stock),
       avgCost: product.avgCost,
     };
   }
 
-  private withComputed(product: any) {
-    return {
-      ...product,
-      _computed: {
-        currentStock: 0,
-        totalPurchased: 0,
-        totalSold: 0,
-        lastPurchaseDate: null,
-        lastSaleDate: null,
-      },
-    };
-  }
 }

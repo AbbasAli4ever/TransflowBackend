@@ -323,6 +323,14 @@ export class TransactionsService {
 
     this.assertDateNotFuture(dto.transactionDate);
 
+    // Task 2.4 — Reject duplicate sourceTransactionLineId in a single request
+    const sourceLineIds = dto.lines.map((l) => l.sourceTransactionLineId);
+    if (new Set(sourceLineIds).size !== sourceLineIds.length) {
+      throw new UnprocessableEntityException(
+        'Duplicate sourceTransactionLineId in request: each source line may only appear once',
+      );
+    }
+
     const supplier = await this.prisma.supplier.findFirst({
       where: { id: dto.supplierId, tenantId },
     });
@@ -430,6 +438,14 @@ export class TransactionsService {
     const createdBy = getContext()?.userId;
 
     this.assertDateNotFuture(dto.transactionDate);
+
+    // Task 2.4 — Reject duplicate sourceTransactionLineId in a single request
+    const sourceLineIds = dto.lines.map((l) => l.sourceTransactionLineId);
+    if (new Set(sourceLineIds).size !== sourceLineIds.length) {
+      throw new UnprocessableEntityException(
+        'Duplicate sourceTransactionLineId in request: each source line may only appear once',
+      );
+    }
 
     const customer = await this.prisma.customer.findFirst({
       where: { id: dto.customerId, tenantId },
@@ -618,8 +634,8 @@ export class TransactionsService {
           quantity: line.quantity,
           lineTotal: 0,
           costTotal: 0,
-          // direction and reason encoded in description
-          description: `${line.direction}|${line.reason}`,
+          // direction and reason stored as JSON in description
+          description: JSON.stringify({ direction: line.direction, reason: line.reason ?? null }),
           createdBy,
         })),
       });

@@ -12,6 +12,8 @@ import { createTestApp, generateTestJWT, authHeader } from '../helpers/test-util
 import {
   createTenantWithUser,
   createTestProduct,
+  createTestSupplier,
+  createAndPostPurchase,
 } from '../helpers/test-factories';
 import { PrismaClient } from '@prisma/client';
 
@@ -180,6 +182,13 @@ describe('Posting — ADJUSTMENT (Integration)', () => {
 
     it('posts adjustment OUT: ADJUSTMENT_OUT movement, no ledger entries', async () => {
       const product = await createTestProduct(prisma, tenantId, userId);
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+
+      // Seed stock before adjustment OUT
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 100 }],
+      });
 
       const adj = await createAndPostAdjustment([
         { productId: product.id, quantity: 5, direction: 'OUT', reason: 'Damaged goods written off' },
@@ -197,6 +206,13 @@ describe('Posting — ADJUSTMENT (Integration)', () => {
     it('posts multi-line adjustment: multiple movements', async () => {
       const product1 = await createTestProduct(prisma, tenantId, userId);
       const product2 = await createTestProduct(prisma, tenantId, userId);
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+
+      // Seed stock for product2 before adjustment OUT
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product2.id, quantity: 10, unitCost: 100 }],
+      });
 
       const adj = await createAndPostAdjustment([
         { productId: product1.id, quantity: 3, direction: 'IN', reason: 'Found' },

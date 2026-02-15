@@ -15,6 +15,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { ImportsModule } from './imports/imports.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { TenantScopeGuard } from './common/guards/tenant-scope.guard';
+import { RolesGuard } from './common/guards/roles.guard';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
 import { TenantContextMiddleware } from './common/middleware/tenant-context.middleware';
 import { AppConfigModule } from './config/config.module';
@@ -53,6 +54,10 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
     {
       provide: APP_GUARD,
       useClass: TenantScopeGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RolesGuard,
     },
     {
       provide: APP_FILTER,

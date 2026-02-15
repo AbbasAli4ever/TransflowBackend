@@ -48,7 +48,7 @@ describe('Customers API (Integration)', () => {
       expect(response.body.name).toBe('Big Corp');
       expect(response.body.id).toBeDefined();
       expect(response.body.tenantId).toBe(tenantId);
-      expect(response.body._computed).toBeDefined();
+      expect(response.body).not.toHaveProperty('_computed');
     });
 
     it('rejects duplicate name', async () => {
@@ -126,7 +126,7 @@ describe('Customers API (Integration)', () => {
         .expect(200);
 
       expect(response.body.id).toBe(customer.id);
-      expect(response.body._computed).toBeDefined();
+      expect(response.body).not.toHaveProperty('_computed');
     });
 
     it('returns 404 for cross-tenant access', async () => {
@@ -166,6 +166,40 @@ describe('Customers API (Integration)', () => {
         .expect(200);
 
       expect(response.body.status).toBe('INACTIVE');
+    });
+  });
+
+  // ─── Wave 3 — DB-level uniqueness enforcement ────────────────────────────────
+
+  describe('Wave 3 — Uniqueness constraint (Task 3.1 / 3.2)', () => {
+    it('rejects duplicate customer name case-insensitively (via DB unique index)', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/customers')
+        .set(authHeader(token))
+        .send({ name: 'Zara Store' })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/customers')
+        .set(authHeader(token))
+        .send({ name: 'ZARA STORE' })
+        .expect(409);
+    });
+
+    it('concurrent duplicate customer creation returns 409 (not 500)', async () => {
+      const [r1, r2] = await Promise.all([
+        request(app.getHttpServer())
+          .post('/api/v1/customers')
+          .set(authHeader(token))
+          .send({ name: 'Race Customer' }),
+        request(app.getHttpServer())
+          .post('/api/v1/customers')
+          .set(authHeader(token))
+          .send({ name: 'Race Customer' }),
+      ]);
+      const statuses = [r1.status, r2.status].sort();
+      expect(statuses).toContain(201);
+      expect(statuses).toContain(409);
     });
   });
 });

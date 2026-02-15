@@ -20,22 +20,26 @@ describe('CustomersService', () => {
         create: jest.fn(),
         update: jest.fn(),
       },
+      statusChangeLog: { create: jest.fn() },
+      $queryRaw: jest.fn().mockResolvedValue([{ balance: 0n }]),
+      $transaction: jest.fn().mockImplementation((args: any[]) =>
+        Promise.all(args.map((op: any) => (typeof op?.then === 'function' ? op : Promise.resolve(op))))
+      ),
     };
 
     service = new CustomersService(prisma as PrismaService);
   });
 
   describe('create', () => {
-    it('throws ConflictException on duplicate name', async () => {
-      prisma.customer.findFirst.mockResolvedValue({ id: 'existing' });
+    it('throws ConflictException on duplicate name (P2002 from DB constraint)', async () => {
+      prisma.customer.create.mockRejectedValue(Object.assign(new Error('Unique constraint'), { code: 'P2002' }));
 
       await expect(
         service.create({ name: 'Big Corp' }),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
-    it('creates customer and returns with _computed', async () => {
-      prisma.customer.findFirst.mockResolvedValue(null);
+    it('creates customer without _computed', async () => {
       prisma.customer.create.mockResolvedValue({
         id: 'cust-1',
         tenantId: 'tenant-1',
@@ -52,8 +56,7 @@ describe('CustomersService', () => {
       const result = await service.create({ name: 'Big Corp' });
 
       expect(result.name).toBe('Big Corp');
-      expect(result._computed).toBeDefined();
-      expect(result._computed.totalSales).toBe(0);
+      expect(result).not.toHaveProperty('_computed');
     });
   });
 
@@ -77,13 +80,13 @@ describe('CustomersService', () => {
       await expect(service.findOne('nonexistent')).rejects.toBeInstanceOf(NotFoundException);
     });
 
-    it('returns customer with _computed', async () => {
+    it('returns customer without _computed', async () => {
       prisma.customer.findFirst.mockResolvedValue({ id: 'cust-1', name: 'Big Corp', tenantId: 'tenant-1' });
 
       const result = await service.findOne('cust-1');
 
       expect(result.name).toBe('Big Corp');
-      expect(result._computed).toBeDefined();
+      expect(result).not.toHaveProperty('_computed');
     });
   });
 
@@ -96,10 +99,7 @@ describe('CustomersService', () => {
 
     it('updates and returns with _computed', async () => {
       const existing = { id: 'cust-1', name: 'Original', tenantId: 'tenant-1' };
-      prisma.customer.findFirst
-        .mockResolvedValueOnce(existing)
-        .mockResolvedValueOnce(null);
-
+      prisma.customer.findFirst.mockResolvedValue(existing);
       prisma.customer.update.mockResolvedValue({ ...existing, name: 'Updated' });
 
       const result = await service.update('cust-1', { name: 'Updated' });

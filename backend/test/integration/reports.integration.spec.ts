@@ -537,11 +537,12 @@ describe('Reports (Integration)', () => {
         transactionDate: '2026-01-01',
       });
 
-      // Partial payment of 1000
+      // Partial payment of 1000, dated before asOfDate so it is included
       await createAndPostCustomerPayment(app, token, {
         customerId: customer.id,
         amount: 1000,
         paymentAccountId: account.id,
+        transactionDate: '2026-01-15',
       });
 
       const res = await request(app.getHttpServer())
@@ -830,6 +831,242 @@ describe('Reports (Integration)', () => {
         .get('/api/v1/reports/payment-accounts/00000000-0000-0000-0000-000000000099/statement?dateFrom=2026-01-01&dateTo=2026-01-31')
         .set(authHeader(token))
         .expect(404);
+    });
+  });
+
+  // ─── WAVE 2: Date Validation (Tasks 1.3 + 1.4) ────────────────────────────
+
+  describe('Wave 2 — asOfDate format validation (Task 1.3)', () => {
+    it('rejects asOfDate datetime string on balance endpoint (400)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      await request(app.getHttpServer())
+        .get(`/api/v1/reports/suppliers/${supplier.id}/balance?asOfDate=2026-02-15T00:00:00Z`)
+        .set(authHeader(token))
+        .expect(400);
+    });
+
+    it('accepts asOfDate YYYY-MM-DD on balance endpoint (200)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      await request(app.getHttpServer())
+        .get(`/api/v1/reports/suppliers/${supplier.id}/balance?asOfDate=2026-02-15`)
+        .set(authHeader(token))
+        .expect(200);
+    });
+
+    it('rejects asOfDate datetime string on pending-receivables (400)', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/reports/pending-receivables?asOfDate=2026-02-15T00:00:00Z')
+        .set(authHeader(token))
+        .expect(400);
+    });
+
+    it('rejects asOfDate datetime string on pending-payables (400)', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/reports/pending-payables?asOfDate=2026-02-15T00:00:00Z')
+        .set(authHeader(token))
+        .expect(400);
+    });
+  });
+
+  describe('Wave 2 — Statement date range validation (Task 1.4)', () => {
+    it('rejects inverted date range on supplier statement (400)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      await request(app.getHttpServer())
+        .get(`/api/v1/reports/suppliers/${supplier.id}/statement?dateFrom=2026-02-15&dateTo=2026-02-01`)
+        .set(authHeader(token))
+        .expect(400);
+    });
+
+    it('accepts same-day date range on supplier statement (200)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      await request(app.getHttpServer())
+        .get(`/api/v1/reports/suppliers/${supplier.id}/statement?dateFrom=2026-02-15&dateTo=2026-02-15`)
+        .set(authHeader(token))
+        .expect(200);
+    });
+
+    it('rejects inverted date range on customer statement (400)', async () => {
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      await request(app.getHttpServer())
+        .get(`/api/v1/reports/customers/${customer.id}/statement?dateFrom=2026-03-01&dateTo=2026-02-01`)
+        .set(authHeader(token))
+        .expect(400);
+    });
+
+    it('rejects inverted date range on payment account statement (400)', async () => {
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+      await request(app.getHttpServer())
+        .get(`/api/v1/reports/payment-accounts/${account.id}/statement?dateFrom=2026-03-01&dateTo=2026-01-01`)
+        .set(authHeader(token))
+        .expect(400);
+    });
+
+    it('rejects datetime string for dateFrom on supplier statement (400)', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      await request(app.getHttpServer())
+        .get(`/api/v1/reports/suppliers/${supplier.id}/statement?dateFrom=2026-02-15T00:00:00Z&dateTo=2026-02-28`)
+        .set(authHeader(token))
+        .expect(400);
+    });
+  });
+
+  // ─── WAVE 2: Pending Reports Temporal Integrity (Task 1.2) ────────────────
+
+  describe('Wave 2 — Pending receivables temporal integrity (Task 1.2)', () => {
+    it('future-dated payment does not close open document for asOfDate=today', async () => {
+      const today = new Date().toISOString().split('T')[0];
+      const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+      });
+
+      const sale = await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ productId: product.id, quantity: 5, unitPrice: 2000 }],
+      });
+
+      // Verify sale shows as open with asOfDate=today
+      const before = await request(app.getHttpServer())
+        .get(`/api/v1/reports/pending-receivables?asOfDate=${today}`)
+        .set(authHeader(token))
+        .expect(200);
+
+      const custBefore = before.body.customers.find((c: any) => c.customerId === customer.id);
+      expect(custBefore).toBeDefined();
+      expect(custBefore.openDocuments).toHaveLength(1);
+      expect(custBefore.openDocuments[0].outstanding).toBe(10000); // 5 * 2000
+
+      // Insert a future-dated payment + allocation directly in DB
+      const payTxn = await prisma.transaction.create({
+        data: {
+          tenantId,
+          type: 'CUSTOMER_PAYMENT',
+          status: 'POSTED',
+          transactionDate: new Date(tomorrow),
+          customerId: customer.id,
+          subtotal: 10000,
+          totalAmount: 10000,
+          discountTotal: 0,
+          documentNumber: 'CPY-TEMP-0001',
+          series: String(new Date().getFullYear()),
+          postedAt: new Date(),
+          createdBy: userId,
+        },
+      });
+
+      await prisma.allocation.create({
+        data: {
+          tenantId,
+          paymentTransactionId: payTxn.id,
+          appliesToTransactionId: sale.id,
+          amountApplied: 10000,
+          createdBy: userId,
+        },
+      });
+
+      // Re-query with asOfDate=today: future payment must NOT close the document
+      const after = await request(app.getHttpServer())
+        .get(`/api/v1/reports/pending-receivables?asOfDate=${today}`)
+        .set(authHeader(token))
+        .expect(200);
+
+      const custAfter = after.body.customers.find((c: any) => c.customerId === customer.id);
+      expect(custAfter).toBeDefined();
+      expect(custAfter.openDocuments[0].outstanding).toBe(10000); // still fully open
+      expect(custAfter.openDocuments[0].paidAmount).toBe(0);      // payment not counted
+
+      // Query with asOfDate=tomorrow: payment now in scope, document is closed
+      const afterTomorrow = await request(app.getHttpServer())
+        .get(`/api/v1/reports/pending-receivables?asOfDate=${tomorrow}`)
+        .set(authHeader(token))
+        .expect(200);
+
+      const custTomorrow = afterTomorrow.body.customers.find((c: any) => c.customerId === customer.id);
+      // Customer should not appear (balance settled) or paidAmount = totalAmount
+      if (custTomorrow) {
+        expect(custTomorrow.openDocuments).toHaveLength(0);
+      }
+    });
+  });
+
+  describe('Wave 2 — Pending payables temporal integrity (Task 1.2)', () => {
+    it('future-dated payment does not close open document for asOfDate=today', async () => {
+      const today = new Date().toISOString().split('T')[0];
+      const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      const purchase = await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 1000 }],
+      });
+
+      // Verify purchase shows as open with asOfDate=today
+      const before = await request(app.getHttpServer())
+        .get(`/api/v1/reports/pending-payables?asOfDate=${today}`)
+        .set(authHeader(token))
+        .expect(200);
+
+      const suppBefore = before.body.suppliers.find((s: any) => s.supplierId === supplier.id);
+      expect(suppBefore).toBeDefined();
+      expect(suppBefore.openDocuments[0].outstanding).toBe(10000);
+
+      // Insert a future-dated payment + allocation directly in DB
+      const payTxn = await prisma.transaction.create({
+        data: {
+          tenantId,
+          type: 'SUPPLIER_PAYMENT',
+          status: 'POSTED',
+          transactionDate: new Date(tomorrow),
+          supplierId: supplier.id,
+          subtotal: 10000,
+          totalAmount: 10000,
+          discountTotal: 0,
+          documentNumber: 'SPY-TEMP-0001',
+          series: String(new Date().getFullYear()),
+          postedAt: new Date(),
+          createdBy: userId,
+        },
+      });
+
+      await prisma.allocation.create({
+        data: {
+          tenantId,
+          paymentTransactionId: payTxn.id,
+          appliesToTransactionId: purchase.id,
+          amountApplied: 10000,
+          createdBy: userId,
+        },
+      });
+
+      // Re-query with asOfDate=today: future payment must NOT close the document
+      const after = await request(app.getHttpServer())
+        .get(`/api/v1/reports/pending-payables?asOfDate=${today}`)
+        .set(authHeader(token))
+        .expect(200);
+
+      const suppAfter = after.body.suppliers.find((s: any) => s.supplierId === supplier.id);
+      expect(suppAfter).toBeDefined();
+      expect(suppAfter.openDocuments[0].outstanding).toBe(10000);
+      expect(suppAfter.openDocuments[0].paidAmount).toBe(0);
+
+      // Query with asOfDate=tomorrow: payment in scope, document is closed
+      const afterTomorrow = await request(app.getHttpServer())
+        .get(`/api/v1/reports/pending-payables?asOfDate=${tomorrow}`)
+        .set(authHeader(token))
+        .expect(200);
+
+      const suppTomorrow = afterTomorrow.body.suppliers.find((s: any) => s.supplierId === supplier.id);
+      if (suppTomorrow) {
+        expect(suppTomorrow.openDocuments).toHaveLength(0);
+      }
     });
   });
 });

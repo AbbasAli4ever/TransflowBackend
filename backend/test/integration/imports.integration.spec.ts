@@ -121,17 +121,15 @@ describe('Imports (integration)', () => {
 
   // ─── Test 4: Upload rejects file > 10MB (400) ────────────────────────────
 
-  it('Upload rejects file > 10MB (400)', async () => {
-    // Create a buffer just over 10MB
+  it('Upload rejects file > 10MB (413)', async () => {
+    // Create a buffer just over 10MB; multer's fileSize limit returns 413 Payload Too Large
     const bigBuf = Buffer.alloc(10 * 1024 * 1024 + 1, 'x');
-    const res = await request(app.getHttpServer())
+    await request(app.getHttpServer())
       .post('/api/v1/imports')
       .set(authHeader(token))
       .attach('file', bigBuf, { filename: 'big.csv', contentType: 'text/csv' })
       .field('module', 'SUPPLIERS')
-      .expect(400);
-
-    expect(res.body.message).toMatch(/too large/i);
+      .expect(413);
   });
 
   // ─── Test 5: Upload rejects unknown module (400) ─────────────────────────
@@ -553,5 +551,64 @@ describe('Imports (integration)', () => {
 
     const updated = await prisma.paymentAccount.findUnique({ where: { id: account.id } });
     expect(updated?.openingBalance).toBe(50000);
+  });
+
+  // ─── Wave 3 — Import Safety ───────────────────────────────────────────────────
+
+  describe('Wave 3 — Task 7.1: TRANSACTIONS module rejected', () => {
+    it('rejects upload with module=TRANSACTIONS (400)', async () => {
+      const csv = createCsvBuffer(['name'], [['Some Supplier']]);
+      await uploadCsv(csv, 'TRANSACTIONS', 'test.csv', 400);
+    });
+  });
+
+  describe('Wave 3 — Task 7.2: CAS prevents duplicate commit', () => {
+    it('concurrent commit on same batch returns one success and one conflict (409)', async () => {
+      const csv = createCsvBuffer(['name', 'phone'], [['Unique Supplier A', '+92300-0000001']]);
+      const uploadRes = await uploadCsv(csv, 'SUPPLIERS');
+      const batchId = uploadRes.body.id;
+      await mapColumns(batchId, { name: 'name', phone: 'phone' });
+
+      // Two concurrent commit requests — one must get 200, the other 409
+      const commitRequest = () =>
+        request(app.getHttpServer())
+          .post(`/api/v1/imports/${batchId}/commit`)
+          .set(authHeader(token))
+          .send({});
+      const [r1, r2] = await Promise.all([commitRequest(), commitRequest()]);
+      const statuses = [r1.status, r2.status].sort();
+      expect(statuses).toContain(200);
+      expect(statuses).toContain(409);
+    });
+  });
+
+  describe('Wave 3 — Task 7.3: Opening balance rollback restores prior value', () => {
+    it('rollback restores the original opening balance, not 0', async () => {
+      // Account starts at 200000
+      const account = await createTestPaymentAccount(prisma, tenantId, userId, {
+        name: 'Savings Account',
+        type: 'BANK',
+        openingBalance: 200000,
+      });
+
+      // Import sets it to 500000
+      const csv = createCsvBuffer(['accountName', 'amount'], [['Savings Account', '500000']]);
+      const uploadRes = await uploadCsv(csv, 'OPENING_BALANCES');
+      const batchId = uploadRes.body.id;
+      await mapColumns(batchId, { accountName: 'accountName', amount: 'amount' });
+      await commitImport(batchId);
+
+      const afterCommit = await prisma.paymentAccount.findUnique({ where: { id: account.id } });
+      expect(afterCommit?.openingBalance).toBe(500000);
+
+      // Rollback must restore to 200000, not 0
+      await request(app.getHttpServer())
+        .post(`/api/v1/imports/${batchId}/rollback`)
+        .set(authHeader(token))
+        .expect(200);
+
+      const afterRollback = await prisma.paymentAccount.findUnique({ where: { id: account.id } });
+      expect(afterRollback?.openingBalance).toBe(200000);
+    });
   });
 });

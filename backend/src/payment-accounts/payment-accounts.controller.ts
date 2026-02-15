@@ -17,6 +17,7 @@ import { UpdatePaymentAccountDto } from './dto/update-payment-account.dto';
 import { ListPaymentAccountsQueryDto } from './dto/list-payment-accounts-query.dto';
 import { UpdateStatusDto } from '../common/dto/update-status.dto';
 import { ApiErrorResponse } from '../common/swagger/api-error-response.dto';
+import { Roles } from '../common/decorators/roles.decorator';
 import {
   PaymentAccountBalanceResponseDto,
   PaymentAccountListResponseDto,
@@ -30,6 +31,7 @@ export class PaymentAccountsController {
   constructor(private paymentAccountsService: PaymentAccountsService) {}
 
   @Post()
+  @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Create payment account' })
   @ApiOkResponse({ description: 'Payment account created', type: PaymentAccountResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
@@ -63,6 +65,7 @@ export class PaymentAccountsController {
   }
 
   @Patch(':id')
+  @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Update payment account' })
   @ApiParam({ name: 'id', description: 'Payment account UUID' })
   @ApiOkResponse({ description: 'Payment account updated', type: PaymentAccountResponseDto })
@@ -75,6 +78,7 @@ export class PaymentAccountsController {
   }
 
   @Patch(':id/status')
+  @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Update payment account status' })
   @ApiParam({ name: 'id', description: 'Payment account UUID' })
   @ApiOkResponse({ description: 'Payment account status updated', type: PaymentAccountResponseDto })

@@ -408,4 +408,122 @@ describe('Dashboard (integration)', () => {
       expect(res.body.recentActivity.todayPurchases).toBe(0);
     });
   });
+
+  // ─── WAVE 2: Temporal Integrity + Date Validation ─────────────────────────
+
+  describe('Wave 2 — asOfDate format validation (Task 1.3)', () => {
+    it('rejects asOfDate with datetime string (400)', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/dashboard/summary?asOfDate=2026-02-15T00:00:00Z')
+        .set(authHeader(token))
+        .expect(400);
+    });
+
+    it('rejects asOfDate with invalid string (400)', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/dashboard/summary?asOfDate=not-a-date')
+        .set(authHeader(token))
+        .expect(400);
+    });
+
+    it('accepts asOfDate in YYYY-MM-DD format (200)', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/dashboard/summary?asOfDate=2026-02-15')
+        .set(authHeader(token))
+        .expect(200);
+    });
+  });
+
+  describe('Wave 2 — Overdue temporal integrity (Task 1.1)', () => {
+    it('future-dated payment does not reduce overdueCount for asOfDate=today', async () => {
+      const today = new Date().toISOString().split('T')[0];
+      const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+
+      // Create a sale posted 40 days ago (overdue) directly via Prisma
+      const saleDate = new Date(Date.now() - 40 * 86400000).toISOString().split('T')[0];
+
+      const saleTxn = await prisma.transaction.create({
+        data: {
+          tenantId,
+          type: 'SALE',
+          status: 'POSTED',
+          transactionDate: new Date(saleDate),
+          customerId: (await prisma.customer.create({ data: { tenantId, name: 'Test Customer OD', status: 'ACTIVE', createdBy: userId } })).id,
+          subtotal: 10000,
+          totalAmount: 10000,
+          discountTotal: 0,
+          documentNumber: 'SAL-TEST-0001',
+          series: String(new Date().getFullYear()),
+          postedAt: new Date(),
+          createdBy: userId,
+        },
+      });
+
+      await prisma.ledgerEntry.create({
+        data: {
+          tenantId,
+          transactionId: saleTxn.id,
+          entryType: 'AR_INCREASE',
+          customerId: saleTxn.customerId!,
+          amount: 10000,
+          transactionDate: new Date(saleDate),
+          createdBy: userId,
+        },
+      });
+
+      // Check overdueCount = 1 with asOfDate=today (no payment yet)
+      const res1 = await request(app.getHttpServer())
+        .get(`/api/v1/dashboard/summary?asOfDate=${today}`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res1.body.receivables.overdueCount).toBe(1);
+      expect(res1.body.receivables.overdueAmount).toBe(10000);
+
+      // Insert a future-dated payment + allocation directly in DB
+      const payTxn = await prisma.transaction.create({
+        data: {
+          tenantId,
+          type: 'CUSTOMER_PAYMENT',
+          status: 'POSTED',
+          transactionDate: new Date(tomorrow),
+          customerId: saleTxn.customerId!,
+          subtotal: 10000,
+          totalAmount: 10000,
+          discountTotal: 0,
+          documentNumber: 'CPY-TEST-0001',
+          series: String(new Date().getFullYear()),
+          postedAt: new Date(),
+          createdBy: userId,
+        },
+      });
+
+      await prisma.allocation.create({
+        data: {
+          tenantId,
+          paymentTransactionId: payTxn.id,
+          appliesToTransactionId: saleTxn.id,
+          amountApplied: 10000,
+          createdBy: userId,
+        },
+      });
+
+      // Re-query with asOfDate=today: future payment must NOT affect overdueCount
+      const res2 = await request(app.getHttpServer())
+        .get(`/api/v1/dashboard/summary?asOfDate=${today}`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res2.body.receivables.overdueCount).toBe(1);
+      expect(res2.body.receivables.overdueAmount).toBe(10000);
+
+      // Query with asOfDate=tomorrow: payment now in range, customer AR balance = 0, overdueCount = 0
+      const res3 = await request(app.getHttpServer())
+        .get(`/api/v1/dashboard/summary?asOfDate=${tomorrow}`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res3.body.receivables.overdueCount).toBe(0);
+    });
+  });
 });

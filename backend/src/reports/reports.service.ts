@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/co
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getContext } from '../common/request-context';
+import { safeMoney } from '../common/utils/money';
 import { BalanceQueryDto } from './dto/balance-query.dto';
 import { StatementQueryDto } from './dto/statement-query.dto';
 import { PendingReceivablesQueryDto } from './dto/pending-receivables-query.dto';
@@ -15,7 +16,7 @@ export class ReportsService {
 
   async getSupplierBalance(id: string, query: BalanceQueryDto) {
     const tenantId = this.requireTenantId();
-    const asOfDate = query.asOfDate ?? this.today();
+    const asOfDate = query.asOfDate ?? await this.getBusinessDate(tenantId);
 
     const supplier = await this.prisma.supplier.findFirst({ where: { id, tenantId } });
     if (!supplier) throw new NotFoundException('Supplier not found');
@@ -46,9 +47,9 @@ export class ReportsService {
     `;
 
     const r = rows[0];
-    const totalPurchases = Number(r.totalPurchases);
-    const totalPayments = Number(r.totalPayments);
-    const totalReturns = Number(r.totalReturns);
+    const totalPurchases = safeMoney(r.totalPurchases);
+    const totalPayments = safeMoney(r.totalPayments);
+    const totalReturns = safeMoney(r.totalReturns);
     const balance = totalPurchases - totalPayments - totalReturns;
 
     return {
@@ -70,7 +71,7 @@ export class ReportsService {
 
   async getCustomerBalance(id: string, query: BalanceQueryDto) {
     const tenantId = this.requireTenantId();
-    const asOfDate = query.asOfDate ?? this.today();
+    const asOfDate = query.asOfDate ?? await this.getBusinessDate(tenantId);
 
     const customer = await this.prisma.customer.findFirst({ where: { id, tenantId } });
     if (!customer) throw new NotFoundException('Customer not found');
@@ -101,9 +102,9 @@ export class ReportsService {
     `;
 
     const r = rows[0];
-    const totalSales = Number(r.totalSales);
-    const totalPayments = Number(r.totalPayments);
-    const totalReturns = Number(r.totalReturns);
+    const totalSales = safeMoney(r.totalSales);
+    const totalPayments = safeMoney(r.totalPayments);
+    const totalReturns = safeMoney(r.totalReturns);
     const balance = totalSales - totalPayments - totalReturns;
 
     return {
@@ -125,7 +126,7 @@ export class ReportsService {
 
   async getPaymentAccountBalance(id: string, query: BalanceQueryDto) {
     const tenantId = this.requireTenantId();
-    const asOfDate = query.asOfDate ?? this.today();
+    const asOfDate = query.asOfDate ?? await this.getBusinessDate(tenantId);
 
     const account = await this.prisma.paymentAccount.findFirst({ where: { id, tenantId } });
     if (!account) throw new NotFoundException('Payment account not found');
@@ -150,8 +151,8 @@ export class ReportsService {
     `;
 
     const r = rows[0];
-    const moneyIn = Number(r.moneyIn);
-    const moneyOut = Number(r.moneyOut);
+    const moneyIn = safeMoney(r.moneyIn);
+    const moneyOut = safeMoney(r.moneyOut);
     const balance = account.openingBalance + moneyIn - moneyOut;
 
     return {
@@ -173,7 +174,7 @@ export class ReportsService {
 
   async getProductStock(id: string, query: BalanceQueryDto) {
     const tenantId = this.requireTenantId();
-    const asOfDate = query.asOfDate ?? this.today();
+    const asOfDate = query.asOfDate ?? await this.getBusinessDate(tenantId);
 
     const product = await this.prisma.product.findFirst({ where: { id, tenantId } });
     if (!product) throw new NotFoundException('Product not found');
@@ -188,6 +189,8 @@ export class ReportsService {
         adjustmentsOut: bigint;
         totalPurchaseCost: bigint;
         totalPurchaseQty: bigint;
+        totalReturnCost: bigint;
+        totalReturnQty: bigint;
       }>
     >`
       SELECT
@@ -197,8 +200,10 @@ export class ReportsService {
         COALESCE(SUM(CASE WHEN movement_type = 'SUPPLIER_RETURN_OUT'THEN quantity ELSE 0 END), 0)::bigint AS "supplierReturnsOut",
         COALESCE(SUM(CASE WHEN movement_type = 'ADJUSTMENT_IN'      THEN quantity ELSE 0 END), 0)::bigint AS "adjustmentsIn",
         COALESCE(SUM(CASE WHEN movement_type = 'ADJUSTMENT_OUT'     THEN quantity ELSE 0 END), 0)::bigint AS "adjustmentsOut",
-        COALESCE(SUM(CASE WHEN movement_type = 'PURCHASE_IN' THEN unit_cost_at_time * quantity ELSE 0 END), 0)::bigint AS "totalPurchaseCost",
-        COALESCE(SUM(CASE WHEN movement_type = 'PURCHASE_IN' THEN quantity ELSE 0 END), 0)::bigint AS "totalPurchaseQty"
+        COALESCE(SUM(CASE WHEN movement_type = 'PURCHASE_IN'        THEN unit_cost_at_time * quantity ELSE 0 END), 0)::bigint AS "totalPurchaseCost",
+        COALESCE(SUM(CASE WHEN movement_type = 'PURCHASE_IN'        THEN quantity ELSE 0 END), 0)::bigint AS "totalPurchaseQty",
+        COALESCE(SUM(CASE WHEN movement_type = 'SUPPLIER_RETURN_OUT' THEN unit_cost_at_time * quantity ELSE 0 END), 0)::bigint AS "totalReturnCost",
+        COALESCE(SUM(CASE WHEN movement_type = 'SUPPLIER_RETURN_OUT' THEN quantity ELSE 0 END), 0)::bigint AS "totalReturnQty"
       FROM inventory_movements
       WHERE tenant_id = ${tenantId}::uuid
         AND product_id = ${id}::uuid
@@ -206,17 +211,21 @@ export class ReportsService {
     `;
 
     const r = rows[0];
-    const purchasesIn = Number(r.purchasesIn);
-    const salesOut = Number(r.salesOut);
-    const customerReturnsIn = Number(r.customerReturnsIn);
-    const supplierReturnsOut = Number(r.supplierReturnsOut);
-    const adjustmentsIn = Number(r.adjustmentsIn);
-    const adjustmentsOut = Number(r.adjustmentsOut);
-    const totalPurchaseQty = Number(r.totalPurchaseQty);
-    const totalPurchaseCost = Number(r.totalPurchaseCost);
+    const purchasesIn = safeMoney(r.purchasesIn);
+    const salesOut = safeMoney(r.salesOut);
+    const customerReturnsIn = safeMoney(r.customerReturnsIn);
+    const supplierReturnsOut = safeMoney(r.supplierReturnsOut);
+    const adjustmentsIn = safeMoney(r.adjustmentsIn);
+    const adjustmentsOut = safeMoney(r.adjustmentsOut);
+    const totalPurchaseCost = safeMoney(r.totalPurchaseCost);
+    const totalPurchaseQty = safeMoney(r.totalPurchaseQty);
+    const totalReturnCost = safeMoney(r.totalReturnCost);
+    const totalReturnQty = safeMoney(r.totalReturnQty);
 
     const netStock = purchasesIn + customerReturnsIn + adjustmentsIn - salesOut - supplierReturnsOut - adjustmentsOut;
-    const avgCost = totalPurchaseQty > 0 ? Math.round(totalPurchaseCost / totalPurchaseQty) : 0;
+    const netCostPool = totalPurchaseCost - totalReturnCost;
+    const netQtyPool = totalPurchaseQty - totalReturnQty;
+    const avgCost = netQtyPool > 0 ? Math.round(netCostPool / netQtyPool) : 0;
 
     return {
       productId: id,
@@ -242,7 +251,7 @@ export class ReportsService {
 
   async getPendingReceivables(query: PendingReceivablesQueryDto) {
     const tenantId = this.requireTenantId();
-    const asOfDate = query.asOfDate ?? this.today();
+    const asOfDate = query.asOfDate ?? await this.getBusinessDate(tenantId);
     const minAmount = query.minAmount ?? 0;
 
     // Query 1: customers with positive AR balance
@@ -250,35 +259,33 @@ export class ReportsService {
       ? Prisma.sql`AND le.customer_id = ${query.customerId}::uuid`
       : Prisma.empty;
 
-    const balanceRows = await this.prisma.$queryRaw<
-      Array<{ customerId: string; customerName: string; balance: bigint }>
-    >`
-      SELECT
-        le.customer_id                           AS "customerId",
-        c.name                                   AS "customerName",
-        COALESCE(SUM(CASE WHEN le.entry_type = 'AR_INCREASE' THEN le.amount ELSE 0 END), 0)
-          - COALESCE(SUM(CASE WHEN le.entry_type = 'AR_DECREASE' THEN le.amount ELSE 0 END), 0) AS balance
-      FROM ledger_entries le
-      JOIN customers c ON c.id = le.customer_id
-      WHERE le.tenant_id = ${tenantId}::uuid
-        AND le.transaction_date <= ${asOfDate}::date
-        ${customerFilter}
-      GROUP BY le.customer_id, c.name
-      HAVING
-        COALESCE(SUM(CASE WHEN le.entry_type = 'AR_INCREASE' THEN le.amount ELSE 0 END), 0)
-          - COALESCE(SUM(CASE WHEN le.entry_type = 'AR_DECREASE' THEN le.amount ELSE 0 END), 0) > ${minAmount}
-      ORDER BY balance DESC
-    `;
+    // Task 8.1: both queries run in a single RepeatableRead snapshot
+    const { balanceRows, docRows } = await this.prisma.$transaction(async (tx) => {
+      const bRows = await tx.$queryRaw<
+        Array<{ customerId: string; customerName: string; balance: bigint }>
+      >`
+        SELECT
+          le.customer_id                           AS "customerId",
+          c.name                                   AS "customerName",
+          COALESCE(SUM(CASE WHEN le.entry_type = 'AR_INCREASE' THEN le.amount ELSE 0 END), 0)
+            - COALESCE(SUM(CASE WHEN le.entry_type = 'AR_DECREASE' THEN le.amount ELSE 0 END), 0) AS balance
+        FROM ledger_entries le
+        JOIN customers c ON c.id = le.customer_id
+        WHERE le.tenant_id = ${tenantId}::uuid
+          AND le.transaction_date <= ${asOfDate}::date
+          ${customerFilter}
+        GROUP BY le.customer_id, c.name
+        HAVING
+          COALESCE(SUM(CASE WHEN le.entry_type = 'AR_INCREASE' THEN le.amount ELSE 0 END), 0)
+            - COALESCE(SUM(CASE WHEN le.entry_type = 'AR_DECREASE' THEN le.amount ELSE 0 END), 0) > ${minAmount}
+        ORDER BY balance DESC
+      `;
 
-    if (balanceRows.length === 0) {
-      return { asOfDate, totalReceivables: 0, customerCount: 0, customers: [] };
-    }
+      if (bRows.length === 0) return { balanceRows: bRows, docRows: [] };
 
-    // Query 2: open SALE documents for those customers (no N+1)
-    const customerIds = balanceRows.map((r) => r.customerId);
-    const idsFragment = Prisma.join(customerIds.map((cid) => Prisma.sql`${cid}::uuid`));
+      const idsFragment = Prisma.join(bRows.map((r) => Prisma.sql`${r.customerId}::uuid`));
 
-    const docRows = await this.prisma.$queryRaw<
+      const dRows = await tx.$queryRaw<
       Array<{
         customerId: string;
         id: string;
@@ -295,21 +302,28 @@ export class ReportsService {
         t.document_number                                         AS "documentNumber",
         t.transaction_date                                        AS "transactionDate",
         t.total_amount                                            AS "totalAmount",
-        COALESCE(SUM(a.amount_applied), 0)::bigint               AS "paidAmount",
-        (t.total_amount - COALESCE(SUM(a.amount_applied), 0))::bigint AS "outstanding"
+        COALESCE(SUM(CASE WHEN payment_t.id IS NOT NULL THEN a.amount_applied ELSE 0 END), 0)::bigint AS "paidAmount",
+        (t.total_amount - COALESCE(SUM(CASE WHEN payment_t.id IS NOT NULL THEN a.amount_applied ELSE 0 END), 0))::bigint AS "outstanding"
       FROM transactions t
       LEFT JOIN allocations a
         ON a.applies_to_transaction_id = t.id
        AND a.tenant_id = ${tenantId}::uuid
+      LEFT JOIN transactions payment_t
+        ON payment_t.id = a.payment_transaction_id
+       AND payment_t.transaction_date <= ${asOfDate}::date
+       AND payment_t.status = 'POSTED'
       WHERE t.tenant_id = ${tenantId}::uuid
         AND t.customer_id IN (${idsFragment})
         AND t.type = 'SALE'
         AND t.status = 'POSTED'
         AND t.transaction_date <= ${asOfDate}::date
       GROUP BY t.customer_id, t.id, t.document_number, t.transaction_date, t.total_amount
-      HAVING t.total_amount - COALESCE(SUM(a.amount_applied), 0) > 0
+      HAVING t.total_amount - COALESCE(SUM(CASE WHEN payment_t.id IS NOT NULL THEN a.amount_applied ELSE 0 END), 0) > 0
       ORDER BY t.transaction_date ASC
     `;
+
+      return { balanceRows: bRows, docRows: dRows };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
 
     // Group documents by customerId
     const docsByCustomer = new Map<string, typeof docRows>();
@@ -332,15 +346,15 @@ export class ReportsService {
       return {
         customerId: row.customerId,
         customerName: row.customerName,
-        balance: Number(row.balance),
+        balance: safeMoney(row.balance),
         oldestInvoiceDate,
         daysPastDue,
         openDocuments: docs.map((d) => ({
           documentNumber: d.documentNumber,
           transactionDate: d.transactionDate.toISOString().split('T')[0],
-          totalAmount: Number(d.totalAmount),
-          paidAmount: Number(d.paidAmount),
-          outstanding: Number(d.outstanding),
+          totalAmount: safeMoney(d.totalAmount),
+          paidAmount: safeMoney(d.paidAmount),
+          outstanding: safeMoney(d.outstanding),
           daysPastDue: Math.floor((asOfMs - d.transactionDate.getTime()) / 86400000),
         })),
       };
@@ -355,41 +369,40 @@ export class ReportsService {
 
   async getPendingPayables(query: PendingPayablesQueryDto) {
     const tenantId = this.requireTenantId();
-    const asOfDate = query.asOfDate ?? this.today();
+    const asOfDate = query.asOfDate ?? await this.getBusinessDate(tenantId);
     const minAmount = query.minAmount ?? 0;
 
     const supplierFilter = query.supplierId
       ? Prisma.sql`AND le.supplier_id = ${query.supplierId}::uuid`
       : Prisma.empty;
 
-    const balanceRows = await this.prisma.$queryRaw<
-      Array<{ supplierId: string; supplierName: string; balance: bigint }>
-    >`
-      SELECT
-        le.supplier_id                           AS "supplierId",
-        s.name                                   AS "supplierName",
-        COALESCE(SUM(CASE WHEN le.entry_type = 'AP_INCREASE' THEN le.amount ELSE 0 END), 0)
-          - COALESCE(SUM(CASE WHEN le.entry_type = 'AP_DECREASE' THEN le.amount ELSE 0 END), 0) AS balance
-      FROM ledger_entries le
-      JOIN suppliers s ON s.id = le.supplier_id
-      WHERE le.tenant_id = ${tenantId}::uuid
-        AND le.transaction_date <= ${asOfDate}::date
-        ${supplierFilter}
-      GROUP BY le.supplier_id, s.name
-      HAVING
-        COALESCE(SUM(CASE WHEN le.entry_type = 'AP_INCREASE' THEN le.amount ELSE 0 END), 0)
-          - COALESCE(SUM(CASE WHEN le.entry_type = 'AP_DECREASE' THEN le.amount ELSE 0 END), 0) > ${minAmount}
-      ORDER BY balance DESC
-    `;
+    // Task 8.1: both queries run in a single RepeatableRead snapshot
+    const { balanceRows, docRows } = await this.prisma.$transaction(async (tx) => {
+      const bRows = await tx.$queryRaw<
+        Array<{ supplierId: string; supplierName: string; balance: bigint }>
+      >`
+        SELECT
+          le.supplier_id                           AS "supplierId",
+          s.name                                   AS "supplierName",
+          COALESCE(SUM(CASE WHEN le.entry_type = 'AP_INCREASE' THEN le.amount ELSE 0 END), 0)
+            - COALESCE(SUM(CASE WHEN le.entry_type = 'AP_DECREASE' THEN le.amount ELSE 0 END), 0) AS balance
+        FROM ledger_entries le
+        JOIN suppliers s ON s.id = le.supplier_id
+        WHERE le.tenant_id = ${tenantId}::uuid
+          AND le.transaction_date <= ${asOfDate}::date
+          ${supplierFilter}
+        GROUP BY le.supplier_id, s.name
+        HAVING
+          COALESCE(SUM(CASE WHEN le.entry_type = 'AP_INCREASE' THEN le.amount ELSE 0 END), 0)
+            - COALESCE(SUM(CASE WHEN le.entry_type = 'AP_DECREASE' THEN le.amount ELSE 0 END), 0) > ${minAmount}
+        ORDER BY balance DESC
+      `;
 
-    if (balanceRows.length === 0) {
-      return { asOfDate, totalPayables: 0, supplierCount: 0, suppliers: [] };
-    }
+      if (bRows.length === 0) return { balanceRows: bRows, docRows: [] };
 
-    const supplierIds = balanceRows.map((r) => r.supplierId);
-    const idsFragment = Prisma.join(supplierIds.map((sid) => Prisma.sql`${sid}::uuid`));
+      const idsFragment = Prisma.join(bRows.map((r) => Prisma.sql`${r.supplierId}::uuid`));
 
-    const docRows = await this.prisma.$queryRaw<
+      const dRows = await tx.$queryRaw<
       Array<{
         supplierId: string;
         id: string;
@@ -406,21 +419,28 @@ export class ReportsService {
         t.document_number                                         AS "documentNumber",
         t.transaction_date                                        AS "transactionDate",
         t.total_amount                                            AS "totalAmount",
-        COALESCE(SUM(a.amount_applied), 0)::bigint               AS "paidAmount",
-        (t.total_amount - COALESCE(SUM(a.amount_applied), 0))::bigint AS "outstanding"
+        COALESCE(SUM(CASE WHEN payment_t.id IS NOT NULL THEN a.amount_applied ELSE 0 END), 0)::bigint AS "paidAmount",
+        (t.total_amount - COALESCE(SUM(CASE WHEN payment_t.id IS NOT NULL THEN a.amount_applied ELSE 0 END), 0))::bigint AS "outstanding"
       FROM transactions t
       LEFT JOIN allocations a
         ON a.applies_to_transaction_id = t.id
        AND a.tenant_id = ${tenantId}::uuid
+      LEFT JOIN transactions payment_t
+        ON payment_t.id = a.payment_transaction_id
+       AND payment_t.transaction_date <= ${asOfDate}::date
+       AND payment_t.status = 'POSTED'
       WHERE t.tenant_id = ${tenantId}::uuid
         AND t.supplier_id IN (${idsFragment})
         AND t.type = 'PURCHASE'
         AND t.status = 'POSTED'
         AND t.transaction_date <= ${asOfDate}::date
       GROUP BY t.supplier_id, t.id, t.document_number, t.transaction_date, t.total_amount
-      HAVING t.total_amount - COALESCE(SUM(a.amount_applied), 0) > 0
+      HAVING t.total_amount - COALESCE(SUM(CASE WHEN payment_t.id IS NOT NULL THEN a.amount_applied ELSE 0 END), 0) > 0
       ORDER BY t.transaction_date ASC
     `;
+
+      return { balanceRows: bRows, docRows: dRows };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
 
     const docsBySupplier = new Map<string, typeof docRows>();
     for (const doc of docRows) {
@@ -442,15 +462,15 @@ export class ReportsService {
       return {
         supplierId: row.supplierId,
         supplierName: row.supplierName,
-        balance: Number(row.balance),
+        balance: safeMoney(row.balance),
         oldestInvoiceDate,
         daysPastDue,
         openDocuments: docs.map((d) => ({
           documentNumber: d.documentNumber,
           transactionDate: d.transactionDate.toISOString().split('T')[0],
-          totalAmount: Number(d.totalAmount),
-          paidAmount: Number(d.paidAmount),
-          outstanding: Number(d.outstanding),
+          totalAmount: safeMoney(d.totalAmount),
+          paidAmount: safeMoney(d.paidAmount),
+          outstanding: safeMoney(d.outstanding),
           daysPastDue: Math.floor((asOfMs - d.transactionDate.getTime()) / 86400000),
         })),
       };
@@ -470,39 +490,43 @@ export class ReportsService {
     const supplier = await this.prisma.supplier.findFirst({ where: { id, tenantId } });
     if (!supplier) throw new NotFoundException('Supplier not found');
 
-    const [openingRows, entryRows] = await Promise.all([
-      this.prisma.$queryRaw<Array<{ openingBalance: bigint }>>`
-        SELECT COALESCE(
-          SUM(CASE WHEN le.entry_type = 'AP_INCREASE' THEN le.amount ELSE -le.amount END), 0
-        )::bigint AS "openingBalance"
-        FROM ledger_entries le
-        JOIN transactions t ON t.id = le.transaction_id
-        WHERE le.tenant_id = ${tenantId}::uuid
-          AND le.supplier_id = ${id}::uuid
-          AND le.transaction_date < ${dateFrom}::date
-          AND t.status = 'POSTED'
-      `,
-      this.prisma.$queryRaw<
-        Array<{ date: Date; documentNumber: string | null; type: string; debit: bigint; credit: bigint }>
-      >`
-        SELECT
-          t.transaction_date                                                        AS date,
-          t.document_number                                                         AS "documentNumber",
-          t.type,
-          CASE WHEN le.entry_type = 'AP_INCREASE' THEN le.amount ELSE 0 END::bigint AS debit,
-          CASE WHEN le.entry_type = 'AP_DECREASE' THEN le.amount ELSE 0 END::bigint AS credit
-        FROM ledger_entries le
-        JOIN transactions t ON t.id = le.transaction_id
-        WHERE le.tenant_id = ${tenantId}::uuid
-          AND le.supplier_id = ${id}::uuid
-          AND le.transaction_date >= ${dateFrom}::date
-          AND le.transaction_date <= ${dateTo}::date
-          AND t.status = 'POSTED'
-        ORDER BY t.transaction_date ASC, t.created_at ASC
-      `,
-    ]);
+    // Task 8.1: both queries share a single RepeatableRead snapshot
+    const [openingRows, entryRows] = await this.prisma.$transaction(
+      async (tx) => Promise.all([
+        tx.$queryRaw<Array<{ openingBalance: bigint }>>`
+          SELECT COALESCE(
+            SUM(CASE WHEN le.entry_type = 'AP_INCREASE' THEN le.amount ELSE -le.amount END), 0
+          )::bigint AS "openingBalance"
+          FROM ledger_entries le
+          JOIN transactions t ON t.id = le.transaction_id
+          WHERE le.tenant_id = ${tenantId}::uuid
+            AND le.supplier_id = ${id}::uuid
+            AND le.transaction_date < ${dateFrom}::date
+            AND t.status = 'POSTED'
+        `,
+        tx.$queryRaw<
+          Array<{ date: Date; documentNumber: string | null; type: string; debit: bigint; credit: bigint }>
+        >`
+          SELECT
+            t.transaction_date                                                        AS date,
+            t.document_number                                                         AS "documentNumber",
+            t.type,
+            CASE WHEN le.entry_type = 'AP_INCREASE' THEN le.amount ELSE 0 END::bigint AS debit,
+            CASE WHEN le.entry_type = 'AP_DECREASE' THEN le.amount ELSE 0 END::bigint AS credit
+          FROM ledger_entries le
+          JOIN transactions t ON t.id = le.transaction_id
+          WHERE le.tenant_id = ${tenantId}::uuid
+            AND le.supplier_id = ${id}::uuid
+            AND le.transaction_date >= ${dateFrom}::date
+            AND le.transaction_date <= ${dateTo}::date
+            AND t.status = 'POSTED'
+          ORDER BY t.transaction_date ASC, t.created_at ASC
+        `,
+      ]),
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
 
-    const openingBalance = Number(openingRows[0].openingBalance);
+    const openingBalance = safeMoney(openingRows[0].openingBalance);
     const entries = this.buildRunningBalance(openingBalance, entryRows, 'debit', 'credit');
     const closingBalance = entries.length > 0 ? entries[entries.length - 1].runningBalance : openingBalance;
 
@@ -526,39 +550,43 @@ export class ReportsService {
     const customer = await this.prisma.customer.findFirst({ where: { id, tenantId } });
     if (!customer) throw new NotFoundException('Customer not found');
 
-    const [openingRows, entryRows] = await Promise.all([
-      this.prisma.$queryRaw<Array<{ openingBalance: bigint }>>`
-        SELECT COALESCE(
-          SUM(CASE WHEN le.entry_type = 'AR_INCREASE' THEN le.amount ELSE -le.amount END), 0
-        )::bigint AS "openingBalance"
-        FROM ledger_entries le
-        JOIN transactions t ON t.id = le.transaction_id
-        WHERE le.tenant_id = ${tenantId}::uuid
-          AND le.customer_id = ${id}::uuid
-          AND le.transaction_date < ${dateFrom}::date
-          AND t.status = 'POSTED'
-      `,
-      this.prisma.$queryRaw<
-        Array<{ date: Date; documentNumber: string | null; type: string; debit: bigint; credit: bigint }>
-      >`
-        SELECT
-          t.transaction_date                                                        AS date,
-          t.document_number                                                         AS "documentNumber",
-          t.type,
-          CASE WHEN le.entry_type = 'AR_INCREASE' THEN le.amount ELSE 0 END::bigint AS debit,
-          CASE WHEN le.entry_type = 'AR_DECREASE' THEN le.amount ELSE 0 END::bigint AS credit
-        FROM ledger_entries le
-        JOIN transactions t ON t.id = le.transaction_id
-        WHERE le.tenant_id = ${tenantId}::uuid
-          AND le.customer_id = ${id}::uuid
-          AND le.transaction_date >= ${dateFrom}::date
-          AND le.transaction_date <= ${dateTo}::date
-          AND t.status = 'POSTED'
-        ORDER BY t.transaction_date ASC, t.created_at ASC
-      `,
-    ]);
+    // Task 8.1: both queries share a single RepeatableRead snapshot
+    const [openingRows, entryRows] = await this.prisma.$transaction(
+      async (tx) => Promise.all([
+        tx.$queryRaw<Array<{ openingBalance: bigint }>>`
+          SELECT COALESCE(
+            SUM(CASE WHEN le.entry_type = 'AR_INCREASE' THEN le.amount ELSE -le.amount END), 0
+          )::bigint AS "openingBalance"
+          FROM ledger_entries le
+          JOIN transactions t ON t.id = le.transaction_id
+          WHERE le.tenant_id = ${tenantId}::uuid
+            AND le.customer_id = ${id}::uuid
+            AND le.transaction_date < ${dateFrom}::date
+            AND t.status = 'POSTED'
+        `,
+        tx.$queryRaw<
+          Array<{ date: Date; documentNumber: string | null; type: string; debit: bigint; credit: bigint }>
+        >`
+          SELECT
+            t.transaction_date                                                        AS date,
+            t.document_number                                                         AS "documentNumber",
+            t.type,
+            CASE WHEN le.entry_type = 'AR_INCREASE' THEN le.amount ELSE 0 END::bigint AS debit,
+            CASE WHEN le.entry_type = 'AR_DECREASE' THEN le.amount ELSE 0 END::bigint AS credit
+          FROM ledger_entries le
+          JOIN transactions t ON t.id = le.transaction_id
+          WHERE le.tenant_id = ${tenantId}::uuid
+            AND le.customer_id = ${id}::uuid
+            AND le.transaction_date >= ${dateFrom}::date
+            AND le.transaction_date <= ${dateTo}::date
+            AND t.status = 'POSTED'
+          ORDER BY t.transaction_date ASC, t.created_at ASC
+        `,
+      ]),
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
 
-    const openingBalance = Number(openingRows[0].openingBalance);
+    const openingBalance = safeMoney(openingRows[0].openingBalance);
     const entries = this.buildRunningBalance(openingBalance, entryRows, 'debit', 'credit');
     const closingBalance = entries.length > 0 ? entries[entries.length - 1].runningBalance : openingBalance;
 
@@ -582,36 +610,40 @@ export class ReportsService {
     const account = await this.prisma.paymentAccount.findFirst({ where: { id, tenantId } });
     if (!account) throw new NotFoundException('Payment account not found');
 
-    const [historicalRows, entryRows] = await Promise.all([
-      this.prisma.$queryRaw<Array<{ historicalBalance: bigint }>>`
-        SELECT COALESCE(
-          SUM(CASE WHEN direction = 'IN' THEN amount ELSE -amount END), 0
-        )::bigint AS "historicalBalance"
-        FROM payment_entries
-        WHERE tenant_id = ${tenantId}::uuid
-          AND payment_account_id = ${id}::uuid
-          AND transaction_date < ${dateFrom}::date
-      `,
-      this.prisma.$queryRaw<
-        Array<{ date: Date; documentNumber: string | null; type: string; moneyIn: bigint; moneyOut: bigint }>
-      >`
-        SELECT
-          pe.transaction_date                                               AS date,
-          t.document_number                                                 AS "documentNumber",
-          t.type,
-          CASE WHEN pe.direction = 'IN'  THEN pe.amount ELSE 0 END::bigint AS "moneyIn",
-          CASE WHEN pe.direction = 'OUT' THEN pe.amount ELSE 0 END::bigint AS "moneyOut"
-        FROM payment_entries pe
-        JOIN transactions t ON t.id = pe.transaction_id
-        WHERE pe.tenant_id = ${tenantId}::uuid
-          AND pe.payment_account_id = ${id}::uuid
-          AND pe.transaction_date >= ${dateFrom}::date
-          AND pe.transaction_date <= ${dateTo}::date
-        ORDER BY pe.transaction_date ASC, pe.created_at ASC
-      `,
-    ]);
+    // Task 8.1: both queries share a single RepeatableRead snapshot
+    const [historicalRows, entryRows] = await this.prisma.$transaction(
+      async (tx) => Promise.all([
+        tx.$queryRaw<Array<{ historicalBalance: bigint }>>`
+          SELECT COALESCE(
+            SUM(CASE WHEN direction = 'IN' THEN amount ELSE -amount END), 0
+          )::bigint AS "historicalBalance"
+          FROM payment_entries
+          WHERE tenant_id = ${tenantId}::uuid
+            AND payment_account_id = ${id}::uuid
+            AND transaction_date < ${dateFrom}::date
+        `,
+        tx.$queryRaw<
+          Array<{ date: Date; documentNumber: string | null; type: string; moneyIn: bigint; moneyOut: bigint }>
+        >`
+          SELECT
+            pe.transaction_date                                               AS date,
+            t.document_number                                                 AS "documentNumber",
+            t.type,
+            CASE WHEN pe.direction = 'IN'  THEN pe.amount ELSE 0 END::bigint AS "moneyIn",
+            CASE WHEN pe.direction = 'OUT' THEN pe.amount ELSE 0 END::bigint AS "moneyOut"
+          FROM payment_entries pe
+          JOIN transactions t ON t.id = pe.transaction_id
+          WHERE pe.tenant_id = ${tenantId}::uuid
+            AND pe.payment_account_id = ${id}::uuid
+            AND pe.transaction_date >= ${dateFrom}::date
+            AND pe.transaction_date <= ${dateTo}::date
+          ORDER BY pe.transaction_date ASC, pe.created_at ASC
+        `,
+      ]),
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
 
-    const openingBalance = account.openingBalance + Number(historicalRows[0].historicalBalance);
+    const openingBalance = account.openingBalance + safeMoney(historicalRows[0].historicalBalance);
     const entries = this.buildRunningBalance(openingBalance, entryRows, 'moneyIn', 'moneyOut');
     const closingBalance = entries.length > 0 ? entries[entries.length - 1].runningBalance : openingBalance;
 
@@ -634,8 +666,10 @@ export class ReportsService {
     return tenantId;
   }
 
-  private today(): string {
-    return new Date().toISOString().split('T')[0];
+  private async getBusinessDate(tenantId: string): Promise<string> {
+    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
+    const tz = tenant?.timezone ?? 'Asia/Karachi';
+    return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
   }
 
   private buildRunningBalance<T extends Record<string, any>>(
@@ -646,8 +680,8 @@ export class ReportsService {
   ) {
     let running = openingBalance;
     return rows.map((row) => {
-      const inAmount = Number(row[inKey]);
-      const outAmount = Number(row[outKey]);
+      const inAmount = safeMoney(row[inKey]);
+      const outAmount = safeMoney(row[outKey]);
       running = running + inAmount - outAmount;
       return {
         date: row.date instanceof Date ? row.date.toISOString().split('T')[0] : row.date,

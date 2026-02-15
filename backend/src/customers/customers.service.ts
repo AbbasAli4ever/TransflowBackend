@@ -3,9 +3,11 @@ import {
   UnauthorizedException,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { getContext } from '../common/request-context';
+import { safeMoney } from '../common/utils/money';
 import { paginateResponse } from '../common/utils/paginate';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
@@ -21,16 +23,15 @@ export class CustomersService {
     if (!tenantId) throw new UnauthorizedException();
     const createdBy = getContext()?.userId;
 
-    const duplicate = await this.prisma.customer.findFirst({
-      where: { tenantId, name: { equals: dto.name, mode: 'insensitive' } },
-    });
-    if (duplicate) throw new ConflictException('Customer name already exists');
-
-    const customer = await this.prisma.customer.create({
-      data: { tenantId, createdBy, ...dto },
-    });
-
-    return this.withComputed(customer);
+    try {
+      const customer = await this.prisma.customer.create({
+        data: { tenantId, createdBy, ...dto },
+      });
+      return customer;
+    } catch (e: any) {
+      if (e.code === 'P2002') throw new ConflictException('Customer name already exists');
+      throw e;
+    }
   }
 
   async findAll(query: ListCustomersQueryDto) {
@@ -63,7 +64,7 @@ export class CustomersService {
       this.prisma.customer.count({ where }),
     ]);
 
-    return paginateResponse(customers.map(c => this.withComputed(c)), total, page, limit);
+    return paginateResponse(customers, total, page, limit);
   }
 
   async findOne(id: string) {
@@ -75,7 +76,7 @@ export class CustomersService {
     });
     if (!customer) throw new NotFoundException('Customer not found');
 
-    return this.withComputed(customer);
+    return customer;
   }
 
   async update(id: string, dto: UpdateCustomerDto) {
@@ -87,19 +88,16 @@ export class CustomersService {
     });
     if (!existing) throw new NotFoundException('Customer not found');
 
-    if (dto.name && dto.name.toLowerCase() !== existing.name.toLowerCase()) {
-      const duplicate = await this.prisma.customer.findFirst({
-        where: { tenantId, name: { equals: dto.name, mode: 'insensitive' }, NOT: { id } },
+    try {
+      const updated = await this.prisma.customer.update({
+        where: { id, tenantId },
+        data: dto,
       });
-      if (duplicate) throw new ConflictException('Customer name already exists');
+      return updated;
+    } catch (e: any) {
+      if (e.code === 'P2002') throw new ConflictException('Customer name already exists');
+      throw e;
     }
-
-    const updated = await this.prisma.customer.update({
-      where: { id, tenantId },
-      data: dto,
-    });
-
-    return this.withComputed(updated);
   }
 
   async updateStatus(id: string, dto: UpdateStatusDto) {
@@ -111,12 +109,34 @@ export class CustomersService {
     });
     if (!existing) throw new NotFoundException('Customer not found');
 
-    const updated = await this.prisma.customer.update({
-      where: { id, tenantId },
-      data: { status: dto.status },
-    });
+    // Task 6.2: block deactivation when customer has an open AR balance
+    if (dto.status === 'INACTIVE') {
+      const balanceRows = await this.prisma.$queryRaw<Array<{ balance: bigint }>>`
+        SELECT COALESCE(SUM(CASE WHEN entry_type = 'AR_INCREASE' THEN amount ELSE -amount END), 0)::bigint AS balance
+        FROM ledger_entries
+        WHERE tenant_id = ${tenantId}::uuid AND customer_id = ${id}::uuid
+      `;
+      if (safeMoney(balanceRows[0]?.balance) > 0) {
+        throw new BadRequestException('Cannot deactivate customer with outstanding receivable balance');
+      }
+    }
 
-    return this.withComputed(updated);
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.customer.update({ where: { id, tenantId }, data: { status: dto.status } }),
+      this.prisma.statusChangeLog.create({
+        data: {
+          tenantId,
+          entityType: 'CUSTOMER',
+          entityId: id,
+          actorUserId: getContext()?.userId ?? null,
+          previousStatus: existing.status,
+          newStatus: dto.status,
+          reason: dto.reason ?? null,
+        },
+      }),
+    ]);
+
+    return updated;
   }
 
   async getBalance(id: string) {
@@ -138,8 +158,8 @@ export class CustomersService {
       WHERE tenant_id = ${tenantId}::uuid AND customer_id = ${id}::uuid
     `;
 
-    const arIncrease = Number(result[0]?.ar_increase ?? 0);
-    const arDecrease = Number(result[0]?.ar_decrease ?? 0);
+    const arIncrease = safeMoney(result[0]?.ar_increase);
+    const arDecrease = safeMoney(result[0]?.ar_decrease);
 
     return {
       customerId: id,
@@ -186,7 +206,7 @@ export class CustomersService {
       ORDER BY t.transaction_date ASC
     `;
 
-    const totalOutstanding = rows.reduce((sum, r) => sum + Number(r.outstanding), 0);
+    const totalOutstanding = rows.reduce((sum, r) => sum + safeMoney(r.outstanding), 0);
 
     return {
       customerId: id,
@@ -196,21 +216,11 @@ export class CustomersService {
         id: r.id,
         documentNumber: r.document_number,
         transactionDate: r.transaction_date,
-        totalAmount: Number(r.total_amount),
-        paidAmount: Number(r.paid_amount),
-        outstanding: Number(r.outstanding),
+        totalAmount: safeMoney(r.total_amount),
+        paidAmount: safeMoney(r.paid_amount),
+        outstanding: safeMoney(r.outstanding),
       })),
     };
   }
 
-  private withComputed(customer: any) {
-    return {
-      ...customer,
-      _computed: {
-        totalSales: 0,
-        currentBalance: 0,
-        lastSaleDate: null,
-      },
-    };
-  }
 }

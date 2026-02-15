@@ -17,6 +17,7 @@ import { UpdateSupplierDto } from './dto/update-supplier.dto';
 import { ListSuppliersQueryDto } from './dto/list-suppliers-query.dto';
 import { UpdateStatusDto } from '../common/dto/update-status.dto';
 import { ApiErrorResponse } from '../common/swagger/api-error-response.dto';
+import { Roles } from '../common/decorators/roles.decorator';
 import {
   SupplierBalanceResponseDto,
   SupplierListResponseDto,
@@ -30,6 +31,7 @@ export class SuppliersController {
   constructor(private suppliersService: SuppliersService) {}
 
   @Post()
+  @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Create supplier' })
   @ApiOkResponse({ description: 'Supplier created', type: SupplierResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
@@ -65,6 +67,7 @@ export class SuppliersController {
   }
 
   @Patch(':id')
+  @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Update supplier' })
   @ApiParam({ name: 'id', description: 'Supplier UUID' })
   @ApiOkResponse({ description: 'Supplier updated', type: SupplierResponseDto })
@@ -77,6 +80,7 @@ export class SuppliersController {
   }
 
   @Patch(':id/status')
+  @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Update supplier status' })
   @ApiParam({ name: 'id', description: 'Supplier UUID' })
   @ApiOkResponse({ description: 'Supplier status updated', type: SupplierResponseDto })

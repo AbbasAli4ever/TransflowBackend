@@ -3,9 +3,11 @@ import {
   UnauthorizedException,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { getContext } from '../common/request-context';
+import { safeMoney } from '../common/utils/money';
 import { paginateResponse } from '../common/utils/paginate';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { UpdateSupplierDto } from './dto/update-supplier.dto';
@@ -21,16 +23,15 @@ export class SuppliersService {
     if (!tenantId) throw new UnauthorizedException();
     const createdBy = getContext()?.userId;
 
-    const duplicate = await this.prisma.supplier.findFirst({
-      where: { tenantId, name: { equals: dto.name, mode: 'insensitive' } },
-    });
-    if (duplicate) throw new ConflictException('Supplier name already exists');
-
-    const supplier = await this.prisma.supplier.create({
-      data: { tenantId, createdBy, ...dto },
-    });
-
-    return this.withComputed(supplier);
+    try {
+      const supplier = await this.prisma.supplier.create({
+        data: { tenantId, createdBy, ...dto },
+      });
+      return supplier;
+    } catch (e: any) {
+      if (e.code === 'P2002') throw new ConflictException('Supplier name already exists');
+      throw e;
+    }
   }
 
   async findAll(query: ListSuppliersQueryDto) {
@@ -63,7 +64,7 @@ export class SuppliersService {
       this.prisma.supplier.count({ where }),
     ]);
 
-    return paginateResponse(suppliers.map(s => this.withComputed(s)), total, page, limit);
+    return paginateResponse(suppliers, total, page, limit);
   }
 
   async findOne(id: string) {
@@ -75,7 +76,7 @@ export class SuppliersService {
     });
     if (!supplier) throw new NotFoundException('Supplier not found');
 
-    return this.withComputed(supplier);
+    return supplier;
   }
 
   async update(id: string, dto: UpdateSupplierDto) {
@@ -87,19 +88,16 @@ export class SuppliersService {
     });
     if (!existing) throw new NotFoundException('Supplier not found');
 
-    if (dto.name && dto.name.toLowerCase() !== existing.name.toLowerCase()) {
-      const duplicate = await this.prisma.supplier.findFirst({
-        where: { tenantId, name: { equals: dto.name, mode: 'insensitive' }, NOT: { id } },
+    try {
+      const updated = await this.prisma.supplier.update({
+        where: { id, tenantId },
+        data: dto,
       });
-      if (duplicate) throw new ConflictException('Supplier name already exists');
+      return updated;
+    } catch (e: any) {
+      if (e.code === 'P2002') throw new ConflictException('Supplier name already exists');
+      throw e;
     }
-
-    const updated = await this.prisma.supplier.update({
-      where: { id, tenantId },
-      data: dto,
-    });
-
-    return this.withComputed(updated);
   }
 
   async updateStatus(id: string, dto: UpdateStatusDto) {
@@ -111,12 +109,34 @@ export class SuppliersService {
     });
     if (!existing) throw new NotFoundException('Supplier not found');
 
-    const updated = await this.prisma.supplier.update({
-      where: { id, tenantId },
-      data: { status: dto.status },
-    });
+    // Task 6.2: block deactivation when supplier has an open AP balance
+    if (dto.status === 'INACTIVE') {
+      const balanceRows = await this.prisma.$queryRaw<Array<{ balance: bigint }>>`
+        SELECT COALESCE(SUM(CASE WHEN entry_type = 'AP_INCREASE' THEN amount ELSE -amount END), 0)::bigint AS balance
+        FROM ledger_entries
+        WHERE tenant_id = ${tenantId}::uuid AND supplier_id = ${id}::uuid
+      `;
+      if (safeMoney(balanceRows[0]?.balance) > 0) {
+        throw new BadRequestException('Cannot deactivate supplier with outstanding payable balance');
+      }
+    }
 
-    return this.withComputed(updated);
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.supplier.update({ where: { id, tenantId }, data: { status: dto.status } }),
+      this.prisma.statusChangeLog.create({
+        data: {
+          tenantId,
+          entityType: 'SUPPLIER',
+          entityId: id,
+          actorUserId: getContext()?.userId ?? null,
+          previousStatus: existing.status,
+          newStatus: dto.status,
+          reason: dto.reason ?? null,
+        },
+      }),
+    ]);
+
+    return updated;
   }
 
   async getBalance(id: string) {
@@ -129,23 +149,27 @@ export class SuppliersService {
     if (!supplier) throw new NotFoundException('Supplier not found');
 
     const result = await this.prisma.$queryRaw<
-      Array<{ ap_increase: bigint; ap_decrease: bigint }>
+      Array<{ ap_increase: bigint; ap_payments: bigint; ap_returns: bigint }>
     >`
       SELECT
-        COALESCE(SUM(CASE WHEN entry_type = 'AP_INCREASE' THEN amount ELSE 0 END), 0) AS ap_increase,
-        COALESCE(SUM(CASE WHEN entry_type = 'AP_DECREASE' THEN amount ELSE 0 END), 0) AS ap_decrease
-      FROM ledger_entries
-      WHERE tenant_id = ${tenantId}::uuid AND supplier_id = ${id}::uuid
+        COALESCE(SUM(CASE WHEN le.entry_type = 'AP_INCREASE' THEN le.amount ELSE 0 END), 0) AS ap_increase,
+        COALESCE(SUM(CASE WHEN le.entry_type = 'AP_DECREASE' AND t.type != 'SUPPLIER_RETURN' THEN le.amount ELSE 0 END), 0) AS ap_payments,
+        COALESCE(SUM(CASE WHEN le.entry_type = 'AP_DECREASE' AND t.type = 'SUPPLIER_RETURN'  THEN le.amount ELSE 0 END), 0) AS ap_returns
+      FROM ledger_entries le
+      JOIN transactions t ON t.id = le.transaction_id
+      WHERE le.tenant_id = ${tenantId}::uuid AND le.supplier_id = ${id}::uuid
     `;
 
-    const apIncrease = Number(result[0]?.ap_increase ?? 0);
-    const apDecrease = Number(result[0]?.ap_decrease ?? 0);
+    const totalPurchases = safeMoney(result[0]?.ap_increase);
+    const totalPayments = safeMoney(result[0]?.ap_payments);
+    const totalReturns = safeMoney(result[0]?.ap_returns);
 
     return {
       supplierId: id,
-      totalPurchases: apIncrease,
-      totalPaid: apDecrease,
-      currentBalance: apIncrease - apDecrease,
+      totalPurchases,
+      totalPayments,
+      totalReturns,
+      currentBalance: totalPurchases - totalPayments - totalReturns,
     };
   }
 
@@ -186,7 +210,7 @@ export class SuppliersService {
       ORDER BY t.transaction_date ASC
     `;
 
-    const totalOutstanding = rows.reduce((sum, r) => sum + Number(r.outstanding), 0);
+    const totalOutstanding = rows.reduce((sum, r) => sum + safeMoney(r.outstanding), 0);
 
     return {
       supplierId: id,
@@ -196,21 +220,11 @@ export class SuppliersService {
         id: r.id,
         documentNumber: r.document_number,
         transactionDate: r.transaction_date,
-        totalAmount: Number(r.total_amount),
-        paidAmount: Number(r.paid_amount),
-        outstanding: Number(r.outstanding),
+        totalAmount: safeMoney(r.total_amount),
+        paidAmount: safeMoney(r.paid_amount),
+        outstanding: safeMoney(r.outstanding),
       })),
     };
   }
 
-  private withComputed(supplier: any) {
-    return {
-      ...supplier,
-      _computed: {
-        totalPurchases: 0,
-        currentBalance: 0,
-        lastPurchaseDate: null,
-      },
-    };
-  }
 }

@@ -25,6 +25,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { ImportsService } from './imports.service';
+import { Roles } from '../common/decorators/roles.decorator';
 import { CreateImportDto } from './dto/create-import.dto';
 import { ColumnMappingDto } from './dto/column-mapping.dto';
 import { CommitImportDto } from './dto/commit-import.dto';
@@ -37,7 +38,7 @@ export class ImportsController {
   constructor(private readonly importsService: ImportsService) {}
 
   @Post()
-  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Upload a CSV or XLSX file to create an import batch' })
   @ApiBody({
@@ -71,6 +72,7 @@ export class ImportsController {
   }
 
   @Post(':id/commit')
+  @Roles('OWNER', 'ADMIN')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Commit a validated import batch to create records' })
   @ApiOkResponse({ description: 'Import committed; records created' })
@@ -83,6 +85,7 @@ export class ImportsController {
   }
 
   @Post(':id/rollback')
+  @Roles('OWNER', 'ADMIN')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Rollback a completed import batch (deletes created records if no dependencies)' })
   @ApiOkResponse({ description: 'Import rolled back' })

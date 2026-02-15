@@ -3,10 +3,12 @@ import {
   UnauthorizedException,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { getContext } from '../common/request-context';
 import { paginateResponse } from '../common/utils/paginate';
+import { safeMoney } from '../common/utils/money';
 import { CreatePaymentAccountDto } from './dto/create-payment-account.dto';
 import { UpdatePaymentAccountDto } from './dto/update-payment-account.dto';
 import { ListPaymentAccountsQueryDto } from './dto/list-payment-accounts-query.dto';
@@ -31,7 +33,7 @@ export class PaymentAccountsService {
           openingBalance: dto.openingBalance ?? 0,
         },
       });
-      return this.withComputed(account);
+      return account;
     } catch (err: any) {
       if (err.code === 'P2002') throw new ConflictException('Payment account name already exists');
       throw err;
@@ -65,7 +67,7 @@ export class PaymentAccountsService {
       this.prisma.paymentAccount.count({ where }),
     ]);
 
-    return paginateResponse(accounts.map(a => this.withComputed(a)), total, page, limit);
+    return paginateResponse(accounts, total, page, limit);
   }
 
   async findOne(id: string) {
@@ -77,7 +79,7 @@ export class PaymentAccountsService {
     });
     if (!account) throw new NotFoundException('Payment account not found');
 
-    return this.withComputed(account);
+    return account;
   }
 
   async update(id: string, dto: UpdatePaymentAccountDto) {
@@ -94,7 +96,7 @@ export class PaymentAccountsService {
         where: { id, tenantId },
         data: dto,
       });
-      return this.withComputed(updated);
+      return updated;
     } catch (err: any) {
       if (err.code === 'P2002') throw new ConflictException('Payment account name already exists');
       throw err;
@@ -110,12 +112,35 @@ export class PaymentAccountsService {
     });
     if (!existing) throw new NotFoundException('Payment account not found');
 
-    const updated = await this.prisma.paymentAccount.update({
-      where: { id, tenantId },
-      data: { status: dto.status },
-    });
+    // Task 6.2: block deactivation when account has a non-zero balance
+    if (dto.status === 'INACTIVE') {
+      const balanceRows = await this.prisma.$queryRaw<Array<{ balance: bigint }>>`
+        SELECT (${existing.openingBalance} + COALESCE(SUM(CASE WHEN direction = 'IN' THEN amount ELSE -amount END), 0))::bigint AS balance
+        FROM payment_entries
+        WHERE tenant_id = ${tenantId}::uuid AND payment_account_id = ${id}::uuid
+      `;
+      const bal = safeMoney(balanceRows[0]?.balance);
+      if (bal !== 0) {
+        throw new BadRequestException('Cannot deactivate payment account with non-zero balance');
+      }
+    }
 
-    return this.withComputed(updated);
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.paymentAccount.update({ where: { id, tenantId }, data: { status: dto.status } }),
+      this.prisma.statusChangeLog.create({
+        data: {
+          tenantId,
+          entityType: 'PAYMENT_ACCOUNT',
+          entityId: id,
+          actorUserId: getContext()?.userId ?? null,
+          previousStatus: existing.status,
+          newStatus: dto.status,
+          reason: dto.reason ?? null,
+        },
+      }),
+    ]);
+
+    return updated;
   }
 
   async getBalance(id: string) {
@@ -137,8 +162,8 @@ export class PaymentAccountsService {
       WHERE tenant_id = ${tenantId}::uuid AND payment_account_id = ${id}::uuid
     `;
 
-    const totalIn = Number(result[0]?.total_in ?? 0);
-    const totalOut = Number(result[0]?.total_out ?? 0);
+    const totalIn = safeMoney(result[0]?.total_in);
+    const totalOut = safeMoney(result[0]?.total_out);
     const currentBalance = account.openingBalance + totalIn - totalOut;
 
     return {
@@ -150,15 +175,4 @@ export class PaymentAccountsService {
     };
   }
 
-  private withComputed(account: any) {
-    return {
-      ...account,
-      _computed: {
-        currentBalance: 0,
-        totalIn: 0,
-        totalOut: 0,
-        lastTransactionDate: null,
-      },
-    };
-  }
 }
