@@ -78,12 +78,18 @@ enum ImportModule {
 }
 
 enum ImportStatus {
+  PENDING_MAPPING
+  VALIDATED
   PROCESSING
   COMPLETED
   FAILED
+  ROLLED_BACK
 }
 
 enum ImportRowStatus {
+  PENDING
+  VALID
+  INVALID
   SUCCESS
   FAILED
 }

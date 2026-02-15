@@ -4,6 +4,7 @@ import { v4 as uuid } from 'uuid';
 import * as request from 'supertest';
 import { INestApplication } from '@nestjs/common';
 import { authHeader } from './test-utils';
+import * as XLSX from 'xlsx';
 
 const PASSWORD_SALT_ROUNDS = 10; // Lower for tests (faster)
 
@@ -329,6 +330,107 @@ export async function createAndPostSupplierReturn(
     .expect(200);
 
   return postRes.body;
+}
+
+/**
+ * Create a customer payment draft and post it via the API.
+ * Returns the posted transaction response body.
+ */
+export async function createAndPostCustomerPayment(
+  app: INestApplication,
+  token: string,
+  options: {
+    customerId: string;
+    amount: number;
+    paymentAccountId: string;
+    transactionDate?: string;
+    idempotencyKey?: string;
+    allocations?: Array<{ transactionId: string; amount: number }>;
+  },
+) {
+  const transactionDate =
+    options.transactionDate || new Date().toISOString().split('T')[0];
+
+  const draftRes = await request(app.getHttpServer())
+    .post('/api/v1/transactions/customer-payments/draft')
+    .set(authHeader(token))
+    .send({
+      customerId: options.customerId,
+      amount: options.amount,
+      paymentAccountId: options.paymentAccountId,
+      transactionDate,
+    })
+    .expect(201);
+
+  const transactionId = draftRes.body.id;
+
+  const postRes = await request(app.getHttpServer())
+    .post(`/api/v1/transactions/${transactionId}/post`)
+    .set(authHeader(token))
+    .send({
+      idempotencyKey: options.idempotencyKey || uuid(),
+      allocations: options.allocations,
+    })
+    .expect(200);
+
+  return postRes.body;
+}
+
+/**
+ * Create a customer return draft and post it via the API.
+ * Returns the posted transaction response body.
+ */
+export async function createAndPostCustomerReturn(
+  app: INestApplication,
+  token: string,
+  options: {
+    customerId: string;
+    lines: Array<{ sourceTransactionLineId: string; quantity: number }>;
+    transactionDate?: string;
+    idempotencyKey?: string;
+  },
+) {
+  const transactionDate =
+    options.transactionDate || new Date().toISOString().split('T')[0];
+
+  const draftRes = await request(app.getHttpServer())
+    .post('/api/v1/transactions/customer-returns/draft')
+    .set(authHeader(token))
+    .send({
+      customerId: options.customerId,
+      transactionDate,
+      lines: options.lines,
+    })
+    .expect(201);
+
+  const transactionId = draftRes.body.id;
+
+  const postRes = await request(app.getHttpServer())
+    .post(`/api/v1/transactions/${transactionId}/post`)
+    .set(authHeader(token))
+    .send({ idempotencyKey: options.idempotencyKey || uuid() })
+    .expect(200);
+
+  return postRes.body;
+}
+
+/**
+ * Create an in-memory CSV buffer for upload tests.
+ */
+export function createCsvBuffer(headers: string[], rows: string[][]): Buffer {
+  const csvCell = (v: string) => (v.includes(',') || v.includes('"') || v.includes('\n') ? `"${v.replace(/"/g, '""')}"` : v);
+  const lines = [headers.map(csvCell).join(','), ...rows.map((r) => r.map(csvCell).join(','))];
+  return Buffer.from(lines.join('\n'), 'utf-8');
+}
+
+/**
+ * Create an in-memory XLSX buffer for upload tests.
+ */
+export function createXlsxBuffer(headers: string[], rows: string[][]): Buffer {
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+  return Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
 }
 
 /**

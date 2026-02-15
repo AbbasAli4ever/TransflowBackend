@@ -3,6 +3,7 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import * as express from 'express';
 import { AppModule } from './app.module';
 import { buildValidationPipe } from './common/pipes/validation.pipe';
 import { ConfigService } from '@nestjs/config';
@@ -14,6 +15,8 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
   app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
+  app.enableShutdownHooks();
+  app.use(express.json({ limit: '1mb' }));
 
   const config = app.get(ConfigService);
   const apiPrefix = config.get<string>('app.apiPrefix');

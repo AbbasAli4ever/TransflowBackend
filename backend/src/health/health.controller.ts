@@ -5,6 +5,7 @@ import {
   ApiServiceUnavailableResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import { Public } from '../common/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiErrorResponse } from '../common/swagger/api-error-response.dto';
@@ -13,7 +14,10 @@ import { HealthResponseDto } from './dto/health-response.dto';
 @ApiTags('Health')
 @Controller('health')
 export class HealthController {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private config: ConfigService,
+  ) {}
 
   @Public()
   @Get()
@@ -43,6 +47,10 @@ export class HealthController {
 
       return {
         status: 'ok',
+        uptime: Math.floor(process.uptime()),
+        version: this.config.get<string>('app.version') ?? '1.0.0',
+        database: 'connected',
+        timestamp: new Date().toISOString(),
         info: {
           database: databaseInfo,
           memory: memoryInfo,

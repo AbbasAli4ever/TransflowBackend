@@ -1,0 +1,835 @@
+import { INestApplication } from '@nestjs/common';
+import * as request from 'supertest';
+import { v4 as uuid } from 'uuid';
+import { AppModule } from '../../src/app.module';
+import {
+  cleanDatabase,
+  setupTestDatabase,
+  teardownTestDatabase,
+  getTestPrismaClient,
+} from '../helpers/test-database';
+import { createTestApp, generateTestJWT, authHeader } from '../helpers/test-utils';
+import {
+  createTenantWithUser,
+  createTestSupplier,
+  createTestCustomer,
+  createTestProduct,
+  createTestPaymentAccount,
+  createAndPostPurchase,
+  createAndPostSale,
+  createAndPostSupplierPayment,
+  createAndPostCustomerPayment,
+  createAndPostSupplierReturn,
+  createAndPostCustomerReturn,
+} from '../helpers/test-factories';
+import { PrismaClient } from '@prisma/client';
+
+describe('Reports (Integration)', () => {
+  let app: INestApplication;
+  let prisma: PrismaClient;
+  let token: string;
+  let tenantId: string;
+  let userId: string;
+
+  beforeAll(async () => {
+    await setupTestDatabase();
+    app = await createTestApp({ imports: [AppModule] });
+    prisma = getTestPrismaClient();
+  });
+
+  beforeEach(async () => {
+    await cleanDatabase();
+    const { tenant, user } = await createTenantWithUser(prisma);
+    tenantId = tenant.id;
+    userId = user.id;
+    token = generateTestJWT({ userId, tenantId, email: user.email, role: user.role });
+  });
+
+  afterAll(async () => {
+    await teardownTestDatabase();
+    await app.close();
+  });
+
+  // ─── EP-1: Supplier Balance ──────────────────────────────────────────────────
+
+  describe('GET /api/v1/reports/suppliers/:id/balance', () => {
+    it('returns zero balance for supplier with no transactions', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/suppliers/${supplier.id}/balance`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.supplierId).toBe(supplier.id);
+      expect(res.body.balance).toBe(0);
+      expect(res.body.balanceType).toBe('SETTLED');
+      expect(res.body.breakdown.purchases.count).toBe(0);
+    });
+
+    it('asOfDate excludes transactions after that date', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+
+      // Purchase on 2026-01-10
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 1000 }],
+        transactionDate: '2026-01-10',
+        paidNow: 3000,
+        paymentAccountId: account.id,
+      });
+
+      // Another purchase on 2026-02-15 (should be excluded when asOfDate=2026-01-31)
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 5, unitCost: 500 }],
+        transactionDate: '2026-02-15',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/suppliers/${supplier.id}/balance?asOfDate=2026-01-31`)
+        .set(authHeader(token))
+        .expect(200);
+
+      // Only the 10,000 purchase and 3,000 payment should be included
+      expect(res.body.breakdown.purchases.totalAmount).toBe(10000);
+      expect(res.body.breakdown.payments.totalAmount).toBe(3000);
+      expect(res.body.balance).toBe(7000);
+      expect(res.body.balanceType).toBe('PAYABLE');
+    });
+
+    it('breakdown separates purchases, payments, and returns', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+
+      // 1 purchase
+      const purchase = await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 20, unitCost: 500 }],
+        transactionDate: '2026-01-05',
+      });
+
+      // 1 payment
+      await createAndPostSupplierPayment(app, token, {
+        supplierId: supplier.id,
+        amount: 3000,
+        paymentAccountId: account.id,
+        transactionDate: '2026-01-10',
+      });
+
+      // 1 return
+      const purchaseLineId = purchase.transactionLines[0].id;
+      await createAndPostSupplierReturn(app, token, {
+        supplierId: supplier.id,
+        lines: [{ sourceTransactionLineId: purchaseLineId, quantity: 2 }],
+        transactionDate: '2026-01-15',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/suppliers/${supplier.id}/balance`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.breakdown.purchases.count).toBe(1);
+      expect(res.body.breakdown.purchases.totalAmount).toBe(10000); // 20 * 500
+      expect(res.body.breakdown.payments.count).toBe(1);
+      expect(res.body.breakdown.payments.totalAmount).toBe(3000);
+      expect(res.body.breakdown.returns.count).toBe(1);
+      expect(res.body.breakdown.returns.totalAmount).toBe(1000); // 2 * 500
+      expect(res.body.balance).toBe(6000); // 10000 - 3000 - 1000
+    });
+
+    it('returns 404 for unknown supplier', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/reports/suppliers/00000000-0000-0000-0000-000000000099/balance')
+        .set(authHeader(token))
+        .expect(404);
+    });
+
+    it('tenant isolation: returns 404 for another tenant supplier', async () => {
+      const { tenant: t2, user: u2 } = await createTenantWithUser(prisma);
+      const supplier2 = await createTestSupplier(prisma, t2.id, u2.id);
+
+      await request(app.getHttpServer())
+        .get(`/api/v1/reports/suppliers/${supplier2.id}/balance`)
+        .set(authHeader(token))
+        .expect(404);
+    });
+  });
+
+  // ─── EP-2: Customer Balance ──────────────────────────────────────────────────
+
+  describe('GET /api/v1/reports/customers/:id/balance', () => {
+    it('asOfDate filters correctly and defaults to today', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 50, unitCost: 100 }],
+      });
+
+      // Sale on 2026-01-05
+      await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ productId: product.id, quantity: 10, unitPrice: 300 }],
+        transactionDate: '2026-01-05',
+      });
+
+      // Sale on 2026-02-10 (excluded when asOfDate=2026-01-31)
+      await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ productId: product.id, quantity: 5, unitPrice: 300 }],
+        transactionDate: '2026-02-10',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/customers/${customer.id}/balance?asOfDate=2026-01-31`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.breakdown.sales.totalAmount).toBe(3000); // only first sale
+      expect(res.body.balance).toBe(3000);
+      expect(res.body.balanceType).toBe('RECEIVABLE');
+    });
+
+    it('breakdown separates sales, payments, and returns', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 30, unitCost: 100 }],
+      });
+
+      // Sale
+      const sale = await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ productId: product.id, quantity: 10, unitPrice: 500 }],
+      });
+
+      // Payment
+      await createAndPostCustomerPayment(app, token, {
+        customerId: customer.id,
+        amount: 2000,
+        paymentAccountId: account.id,
+      });
+
+      // Return
+      const saleLineId = sale.transactionLines[0].id;
+      await createAndPostCustomerReturn(app, token, {
+        customerId: customer.id,
+        lines: [{ sourceTransactionLineId: saleLineId, quantity: 2 }],
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/customers/${customer.id}/balance`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.breakdown.sales.count).toBe(1);
+      expect(res.body.breakdown.sales.totalAmount).toBe(5000);
+      expect(res.body.breakdown.payments.count).toBe(1);
+      expect(res.body.breakdown.payments.totalAmount).toBe(2000);
+      expect(res.body.breakdown.returns.count).toBe(1);
+      expect(res.body.breakdown.returns.totalAmount).toBe(1000); // 2 * 500
+      expect(res.body.balance).toBe(2000); // 5000 - 2000 - 1000
+    });
+
+    it('returns 404 for unknown customer', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/reports/customers/00000000-0000-0000-0000-000000000099/balance')
+        .set(authHeader(token))
+        .expect(404);
+    });
+
+    it('tenant isolation: returns 404 for another tenant customer', async () => {
+      const { tenant: t2, user: u2 } = await createTenantWithUser(prisma);
+      const customer2 = await createTestCustomer(prisma, t2.id, u2.id);
+
+      await request(app.getHttpServer())
+        .get(`/api/v1/reports/customers/${customer2.id}/balance`)
+        .set(authHeader(token))
+        .expect(404);
+    });
+  });
+
+  // ─── EP-3: Payment Account Balance ──────────────────────────────────────────
+
+  describe('GET /api/v1/reports/payment-accounts/:id/balance', () => {
+    it('includes openingBalance from account record', async () => {
+      const account = await createTestPaymentAccount(prisma, tenantId, userId, {
+        openingBalance: 5000,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/payment-accounts/${account.id}/balance`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.accountId).toBe(account.id);
+      expect(res.body.breakdown.openingBalance).toBe(5000);
+      expect(res.body.balance).toBe(5000);
+    });
+
+    it('asOfDate filters payment entries correctly', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId, {
+        openingBalance: 10000,
+      });
+
+      // Payment out on 2026-01-10 (5 * 400 = 2000 total, paid in full)
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 5, unitCost: 400 }],
+        transactionDate: '2026-01-10',
+        paidNow: 2000,
+        paymentAccountId: account.id,
+      });
+
+      // Payment out on 2026-02-10 (excluded when asOfDate=2026-01-31)
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 5, unitCost: 200 }],
+        transactionDate: '2026-02-10',
+        paidNow: 1000,
+        paymentAccountId: account.id,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/payment-accounts/${account.id}/balance?asOfDate=2026-01-31`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.balance).toBe(8000); // 10000 - 2000
+      expect(res.body.breakdown.moneyOut.totalAmount).toBe(2000);
+    });
+
+    it('returns 404 for unknown payment account', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/reports/payment-accounts/00000000-0000-0000-0000-000000000099/balance')
+        .set(authHeader(token))
+        .expect(404);
+    });
+  });
+
+  // ─── EP-4: Product Stock ─────────────────────────────────────────────────────
+
+  describe('GET /api/v1/reports/products/:id/stock', () => {
+    it('asOfDate filters inventory movements correctly', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      // Purchase on 2026-01-05: 20 units in
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 20, unitCost: 500 }],
+        transactionDate: '2026-01-05',
+      });
+
+      // Purchase on 2026-02-05: 10 more units (should be excluded when asOfDate=2026-01-31)
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 600 }],
+        transactionDate: '2026-02-05',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/products/${product.id}/stock?asOfDate=2026-01-31`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.currentStock).toBe(20);
+      expect(res.body.avgCost).toBe(500);
+      expect(res.body.stockValue).toBe(10000);
+    });
+
+    it('breakdown counts each movement type separately', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      // 30 in via purchase
+      const purchase = await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 30, unitCost: 200 }],
+      });
+
+      // 8 out via sale, 2 return from customer
+      const sale = await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ productId: product.id, quantity: 8, unitPrice: 500 }],
+      });
+
+      const saleLineId = sale.transactionLines[0].id;
+      await createAndPostCustomerReturn(app, token, {
+        customerId: customer.id,
+        lines: [{ sourceTransactionLineId: saleLineId, quantity: 2 }],
+      });
+
+      // 5 out via supplier return
+      const purchaseLineId = purchase.transactionLines[0].id;
+      await createAndPostSupplierReturn(app, token, {
+        supplierId: supplier.id,
+        lines: [{ sourceTransactionLineId: purchaseLineId, quantity: 5 }],
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/products/${product.id}/stock`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.breakdown.purchasesIn).toBe(30);
+      expect(res.body.breakdown.salesOut).toBe(8);
+      expect(res.body.breakdown.customerReturnsIn).toBe(2);
+      expect(res.body.breakdown.supplierReturnsOut).toBe(5);
+      expect(res.body.breakdown.netStock).toBe(19); // 30 - 8 + 2 - 5
+      expect(res.body.currentStock).toBe(19);
+    });
+
+    it('stockValue equals currentStock times avgCost', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 300 }],
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/products/${product.id}/stock`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.stockValue).toBe(res.body.currentStock * res.body.avgCost);
+    });
+
+    it('returns 404 for unknown product', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/reports/products/00000000-0000-0000-0000-000000000099/stock')
+        .set(authHeader(token))
+        .expect(404);
+    });
+  });
+
+  // ─── EP-5: Pending Receivables ───────────────────────────────────────────────
+
+  describe('GET /api/v1/reports/pending-receivables', () => {
+    it('includes only customers with positive AR balance', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customerA = await createTestCustomer(prisma, tenantId, userId, { name: 'Customer A' });
+      const customerB = await createTestCustomer(prisma, tenantId, userId, { name: 'Customer B' });
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 50, unitCost: 100 }],
+      });
+
+      // customerA: 5000 outstanding
+      await createAndPostSale(app, token, {
+        customerId: customerA.id,
+        lines: [{ productId: product.id, quantity: 10, unitPrice: 500 }],
+      });
+
+      // customerB: fully paid — balance = 0, should NOT appear
+      const saleB = await createAndPostSale(app, token, {
+        customerId: customerB.id,
+        lines: [{ productId: product.id, quantity: 4, unitPrice: 500 }],
+      });
+      await createAndPostCustomerPayment(app, token, {
+        customerId: customerB.id,
+        amount: 2000,
+        paymentAccountId: account.id,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/reports/pending-receivables')
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.customerCount).toBe(1);
+      expect(res.body.customers[0].customerId).toBe(customerA.id);
+      expect(res.body.totalReceivables).toBe(5000);
+    });
+
+    it('minAmount filter excludes customers below threshold', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customerA = await createTestCustomer(prisma, tenantId, userId, { name: 'High Balance' });
+      const customerB = await createTestCustomer(prisma, tenantId, userId, { name: 'Low Balance' });
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 100, unitCost: 50 }],
+      });
+
+      await createAndPostSale(app, token, {
+        customerId: customerA.id,
+        lines: [{ productId: product.id, quantity: 20, unitPrice: 500 }], // 10000
+      });
+      await createAndPostSale(app, token, {
+        customerId: customerB.id,
+        lines: [{ productId: product.id, quantity: 2, unitPrice: 200 }], // 400
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/reports/pending-receivables?minAmount=1000')
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.customerCount).toBe(1);
+      expect(res.body.customers[0].customerId).toBe(customerA.id);
+    });
+
+    it('customerId filter returns only that customer', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customerA = await createTestCustomer(prisma, tenantId, userId);
+      const customerB = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 50, unitCost: 100 }],
+      });
+
+      await createAndPostSale(app, token, {
+        customerId: customerA.id,
+        lines: [{ productId: product.id, quantity: 5, unitPrice: 300 }],
+      });
+      await createAndPostSale(app, token, {
+        customerId: customerB.id,
+        lines: [{ productId: product.id, quantity: 3, unitPrice: 300 }],
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/pending-receivables?customerId=${customerA.id}`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.customerCount).toBe(1);
+      expect(res.body.customers[0].customerId).toBe(customerA.id);
+    });
+
+    it('open documents include outstanding amount and daysPastDue', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 20, unitCost: 100 }],
+      });
+
+      // Sale of 10 units at 500 each = 5000 total
+      await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ productId: product.id, quantity: 10, unitPrice: 500 }],
+        transactionDate: '2026-01-01',
+      });
+
+      // Partial payment of 1000
+      await createAndPostCustomerPayment(app, token, {
+        customerId: customer.id,
+        amount: 1000,
+        paymentAccountId: account.id,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/pending-receivables?asOfDate=2026-02-01`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.customers).toHaveLength(1);
+      const docs = res.body.customers[0].openDocuments;
+      expect(docs).toHaveLength(1);
+      expect(docs[0].outstanding).toBe(4000); // 5000 - 1000 allocated
+      expect(docs[0].daysPastDue).toBe(31); // Jan 1 to Feb 1
+    });
+  });
+
+  // ─── EP-6: Pending Payables ──────────────────────────────────────────────────
+
+  describe('GET /api/v1/reports/pending-payables', () => {
+    it('includes only suppliers with positive AP balance', async () => {
+      const supplierA = await createTestSupplier(prisma, tenantId, userId, { name: 'Supplier A' });
+      const supplierB = await createTestSupplier(prisma, tenantId, userId, { name: 'Supplier B' });
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+
+      // supplierA: outstanding 5000
+      await createAndPostPurchase(app, token, {
+        supplierId: supplierA.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+      });
+
+      // supplierB: fully paid — should NOT appear
+      await createAndPostPurchase(app, token, {
+        supplierId: supplierB.id,
+        lines: [{ productId: product.id, quantity: 4, unitCost: 500 }],
+        paidNow: 2000,
+        paymentAccountId: account.id,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/reports/pending-payables')
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.supplierCount).toBe(1);
+      expect(res.body.suppliers[0].supplierId).toBe(supplierA.id);
+      expect(res.body.totalPayables).toBe(5000);
+    });
+
+    it('supplierId filter returns only that supplier', async () => {
+      const supplierA = await createTestSupplier(prisma, tenantId, userId);
+      const supplierB = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplierA.id,
+        lines: [{ productId: product.id, quantity: 5, unitCost: 500 }],
+      });
+      await createAndPostPurchase(app, token, {
+        supplierId: supplierB.id,
+        lines: [{ productId: product.id, quantity: 3, unitCost: 500 }],
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/pending-payables?supplierId=${supplierA.id}`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.supplierCount).toBe(1);
+      expect(res.body.suppliers[0].supplierId).toBe(supplierA.id);
+    });
+  });
+
+  // ─── EP-7: Supplier Statement ────────────────────────────────────────────────
+
+  describe('GET /api/v1/reports/suppliers/:id/statement', () => {
+    it('openingBalance is sum of AP entries before dateFrom', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      // Pre-range purchase: 5000 AP_INCREASE
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        transactionDate: '2025-12-15',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/suppliers/${supplier.id}/statement?dateFrom=2026-01-01&dateTo=2026-01-31`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.openingBalance).toBe(5000);
+      expect(res.body.entries).toHaveLength(0);
+      expect(res.body.closingBalance).toBe(5000);
+    });
+
+    it('runningBalance accumulates correctly across entries', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+
+      // Purchase on 2026-01-05: 10000
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 20, unitCost: 500 }],
+        transactionDate: '2026-01-05',
+      });
+
+      // Payment on 2026-01-15: 4000
+      await createAndPostSupplierPayment(app, token, {
+        supplierId: supplier.id,
+        amount: 4000,
+        paymentAccountId: account.id,
+        transactionDate: '2026-01-15',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/suppliers/${supplier.id}/statement?dateFrom=2026-01-01&dateTo=2026-01-31`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.openingBalance).toBe(0);
+      expect(res.body.entries).toHaveLength(2);
+      expect(res.body.entries[0].runningBalance).toBe(10000); // after purchase
+      expect(res.body.entries[1].runningBalance).toBe(6000);  // after payment
+      expect(res.body.closingBalance).toBe(6000);
+    });
+
+    it('empty date range returns openingBalance as closingBalance', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 1000 }],
+        transactionDate: '2025-12-01',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/suppliers/${supplier.id}/statement?dateFrom=2026-02-01&dateTo=2026-02-28`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.openingBalance).toBe(10000);
+      expect(res.body.entries).toHaveLength(0);
+      expect(res.body.closingBalance).toBe(10000);
+    });
+
+    it('returns 404 for unknown supplier', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/reports/suppliers/00000000-0000-0000-0000-000000000099/statement?dateFrom=2026-01-01&dateTo=2026-01-31')
+        .set(authHeader(token))
+        .expect(404);
+    });
+  });
+
+  // ─── EP-8: Customer Statement ────────────────────────────────────────────────
+
+  describe('GET /api/v1/reports/customers/:id/statement', () => {
+    it('mirrors supplier statement logic with AR entries', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 30, unitCost: 100 }],
+      });
+
+      // Pre-range sale
+      await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ productId: product.id, quantity: 5, unitPrice: 400 }],
+        transactionDate: '2025-12-20',
+      });
+
+      // In-range sale
+      await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ productId: product.id, quantity: 8, unitPrice: 400 }],
+        transactionDate: '2026-01-10',
+      });
+
+      // In-range payment
+      await createAndPostCustomerPayment(app, token, {
+        customerId: customer.id,
+        amount: 1000,
+        paymentAccountId: account.id,
+        transactionDate: '2026-01-20',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/customers/${customer.id}/statement?dateFrom=2026-01-01&dateTo=2026-01-31`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.openingBalance).toBe(2000); // 5 * 400 pre-range
+      expect(res.body.entries).toHaveLength(2);
+      expect(res.body.entries[0].runningBalance).toBe(5200); // 2000 + 3200
+      expect(res.body.entries[1].runningBalance).toBe(4200); // 5200 - 1000
+      expect(res.body.closingBalance).toBe(4200);
+    });
+
+    it('returns 404 for unknown customer', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/reports/customers/00000000-0000-0000-0000-000000000099/statement?dateFrom=2026-01-01&dateTo=2026-01-31')
+        .set(authHeader(token))
+        .expect(404);
+    });
+  });
+
+  // ─── EP-9: Payment Account Statement ────────────────────────────────────────
+
+  describe('GET /api/v1/reports/payment-accounts/:id/statement', () => {
+    it('openingBalance includes account.openingBalance plus pre-range entries', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId, {
+        openingBalance: 5000,
+      });
+
+      // Pre-range payment out: 2000
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        transactionDate: '2025-12-10',
+        paidNow: 2000,
+        paymentAccountId: account.id,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/payment-accounts/${account.id}/statement?dateFrom=2026-01-01&dateTo=2026-01-31`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.openingBalance).toBe(3000); // 5000 (account) - 2000 (pre-range out)
+      expect(res.body.entries).toHaveLength(0);
+      expect(res.body.closingBalance).toBe(3000);
+    });
+
+    it('runningBalance correct for in-range entries', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId, {
+        openingBalance: 10000,
+      });
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 20, unitCost: 200 }],
+      });
+
+      // Pay supplier 3000 out via explicit payment
+      await createAndPostSupplierPayment(app, token, {
+        supplierId: supplier.id,
+        amount: 3000,
+        paymentAccountId: account.id,
+        transactionDate: '2026-01-05',
+      });
+
+      // Receive from customer 1500 in
+      await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ productId: product.id, quantity: 5, unitPrice: 500 }],
+        transactionDate: '2026-01-15',
+        receivedNow: 1500,
+        paymentAccountId: account.id,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/payment-accounts/${account.id}/statement?dateFrom=2026-01-01&dateTo=2026-01-31`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.openingBalance).toBe(10000);
+      expect(res.body.entries).toHaveLength(2);
+      expect(res.body.entries[0].runningBalance).toBe(7000); // 10000 - 3000
+      expect(res.body.entries[1].runningBalance).toBe(8500); // 7000 + 1500
+      expect(res.body.closingBalance).toBe(8500);
+    });
+
+    it('returns 404 for unknown payment account', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/reports/payment-accounts/00000000-0000-0000-0000-000000000099/statement?dateFrom=2026-01-01&dateTo=2026-01-31')
+        .set(authHeader(token))
+        .expect(404);
+    });
+  });
+});
