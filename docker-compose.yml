@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_USER: finance
+      POSTGRES_PASSWORD: finance_dev
+      POSTGRES_DB: finance_system
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finance"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: ./backend
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://finance:finance_dev@db:5432/finance_system
+      JWT_SECRET: dev-secret-change-in-prod
+      NODE_ENV: development
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

@@ -8,8 +8,8 @@
 
 | Item | Location |
 |------|----------|
-| Current Phase | **Phase 1** (Complete) |
-| Next Phase | **Phase 5**: Payments + Allocations |
+| Current Phase | **Phase 7** (Complete) |
+| Next Phase | **N/A** (Final Phase - Hardening Deferred) |
 | Implementation Plans | `Documentation/IMPLEMENTATION_PLAN*.md` |
 | Domain Specs | `Documentation/docs/` |
 | Backend Code | `backend/` |
@@ -48,8 +48,8 @@ Transaction (Event) → Posting Engine → Truth Tables (Entries)
 | 3 | Master Data APIs | ✅ Complete | Suppliers, Customers, Products, Accounts CRUD |
 | 4 | Posting Engine Core | ✅ Complete | PURCHASE, SALE posting with entries |
 | 5 | Payments + Allocations | ✅ Complete | Standalone payments, allocation system |
-| 6 | Returns + Transfers | 📋 Planned | Returns with strict rules, internal transfers |
-| 7 | Queries + Hardening | 📋 Planned | Dashboards, imports, production prep |
+ | 6 | Returns + Transfers | ✅ Complete | Returns with strict rules, internal transfers | 
+| 7 | Queries + Hardening | ✅ Complete | Reports, Dashboard, & Imports complete; Hardening deferred |
 ### Phase Documentation Locations
 
 ```
@@ -409,48 +409,37 @@ backend/
 - [x] **Comprehensive Testing:** Added numerous unit and integration tests covering draft creation, purchase/sale posting, idempotency, concurrency, validation, and all new balance/stock query endpoints. Total tests: 247 passing.
 - [x] **Idempotency & Concurrency Control:** Posting logic uses `Serializable` transactions and `idempotencyKey` to ensure data integrity under concurrent operations.
 
-**Files Created/Modified**:
-```
-backend/
-├── src/
-│   ├── app.module.ts                                 # TransactionsModule added
-│   ├── customers/
-│   │   ├── customers.controller.ts                   # getBalance endpoint added
-│   │   └── customers.service.ts                      # getBalance method added
-│   ├── payment-accounts/
-│   │   ├── payment-accounts.controller.ts            # getBalance endpoint added
-│   │   └── payment-accounts.service.ts               # getBalance method added
-│   ├── products/
-│   │   ├── products.controller.ts                    # getStock endpoint added
-│   │   └── products.service.ts                       # getStock method added
-│   ├── suppliers/
-│   │   ├── suppliers.controller.ts                   # getBalance endpoint added
-│   │   └── suppliers.service.ts                      # getBalance method added
-│   └── transactions/                                 # New module for Phase 4
-│       ├── dto/                                      # Transaction DTOs
-│       │   ├── create-purchase-draft.dto.ts
-│       │   ├── create-sale-draft.dto.ts
-│       │   ├── list-transactions-query.dto.ts
-│       │   ├── post-transaction.dto.ts
-│       │   ├── purchase-line.dto.ts
-│       │   └── sale-line.dto.ts
-│       ├── posting.service.ts                        # Core posting logic
-│       ├── transactions.controller.ts                # Transaction API endpoints
-│       ├── transactions.module.ts
-│       └── transactions.service.ts                   # Transaction draft management
-└── test/
-    ├── helpers/
-    │   └── test-factories.ts                         # createAndPostPurchase helper added
-    └── integration/
-        ├── balance-queries.integration.spec.ts       # New balance/stock query tests
-        ├── posting-concurrency.integration.spec.ts   # New concurrency tests
-        ├── posting-purchase.integration.spec.ts      # New purchase posting tests
-        ├── posting-sale.integration.spec.ts          # New sale posting tests
-        └── transactions.integration.spec.ts          # New transaction draft tests
-```
+### Phase 5: Complete ✅
 
+**Delivered**:
+- [x] **Payment & Allocation Logic:** Implemented the core logic for applying customer and supplier payments to open invoices.
+- [x] **New API Endpoints:** Created endpoints for creating payment drafts (`/customer-payments/draft`, `/supplier-payments/draft`), listing allocations, and fetching open documents for suppliers/customers.
+- [x] **Auto-Allocation:** The posting service can now automatically allocate payments to the oldest invoices if not specified manually.
+- [x] **New Tests:** Added 44 new integration tests to cover all payment and allocation functionality.
 
+### Phase 6: Complete ✅
 
+**Delivered**:
+- [x] **New Transaction Types:** Implemented four major new transaction types: `SUPPLIER_RETURN`, `CUSTOMER_RETURN`, `INTERNAL_TRANSFER`, and `ADJUSTMENT`.
+- [x] **New API Endpoints:** Added new DTOs and controller methods for creating drafts of all new transaction types.
+- [x] **Core Posting Logic:** The `PostingService` was updated to handle the posting of all four new types, including return validation and refund processing.
+- [x] **Extensive Testing:** Added 46 new integration tests to validate the new functionality, bringing the total to 341 passing tests.
+
+### Phase 7: Complete ✅
+
+**Delivered (Verified)**:
+- [x] **Phase 7a (Reports Module):** Implemented 9 new analytical endpoints for balances, stock, pending receivables/payables, and statements.
+- [x] **Phase 7b (Dashboard Module):** Implemented the `GET /dashboard/summary` endpoint providing a tenant-wide financial snapshot.
+- [x] **Phase 7c (Import System):** Implemented 6 new endpoints for the full data import lifecycle (Upload, Map, Commit, Rollback, List, Detail) supporting CSV/XLSX.
+- [x] **Hardening (Partial):** Graceful shutdown enabled, global request size limit added, and health check enhanced with version/uptime/DB status.
+- [x] **Documentation:** `import-guide.md` created and `04-api-spec.md` updated with all new endpoints.
+
+**Deferred for Later Implementation**:
+- [ ] **Phase 7d (Production Hardening):**
+  - [ ] Containerization assets (`Dockerfile`, `docker-compose.yml`, `.dockerignore`)
+  - [ ] CI/CD configuration (`.github/workflows/ci.yml`)
+  - [ ] Backup & restore scripts (`scripts/backup-db.sh`, `scripts/restore-db.sh`)
+  - [ ] Final `deployment-guide.md` (dependent on containerization assets)
 
 ---
 
@@ -589,4 +578,4 @@ npx tsc --noEmit
 
 **Last Updated**: 2026-02-11
 **Maintainer**: Human + AI Collaboration
-**Status**: Active - Phase 4 Pending
+**Status**: Active - Phase 7 Complete

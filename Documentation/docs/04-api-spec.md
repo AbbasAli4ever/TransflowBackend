@@ -226,80 +226,117 @@ Response:
 }
 ```
 
-### POST /supplier-payments
+### POST /transactions/supplier-returns/draft
 
+Creates a draft for a supplier return. This transaction reduces inventory and creates a credit on the supplier's account (Accounts Payable).
+
+**Business Rules:**
+- Each line in the return **must** reference a `sourceTransactionLineId` from a previously `POSTED` `PURCHASE` transaction.
+- The quantity being returned cannot exceed the original quantity purchased, minus any previous returns for that same line.
+
+**Request:**
 ```json
 {
-  "transaction_date": "2026-02-01",
-  "supplier_id": "uuid",
-  "amount": 3000,
-  "payment_account_id": "uuid",
-  "allocations": [
-    { "transaction_id": "uuid", "amount": 3000 }
-  ]
-}
-```
-
-### POST /customer-payments
-
-```json
-{
-  "transaction_date": "2026-02-01",
-  "customer_id": "uuid",
-  "amount": 1200,
-  "payment_account_id": "uuid",
-  "allocations": [
-    { "transaction_id": "uuid", "amount": 1200 }
-  ]
-}
-```
-
-### POST /supplier-returns (V1.1)
-
-```json
-{
-  "transaction_date": "2026-02-01",
-  "supplier_id": "uuid",
+  "supplierId": "uuid",
+  "transactionDate": "2026-02-10",
   "lines": [
     {
-      "product_id": "uuid",
-      "qty": 1,
-      "source_transaction_line_id": "uuid"
+      "sourceTransactionLineId": "uuid",
+      "quantity": 2,
+      "reason": "Defective items"
     }
   ],
-  "refund_amount": 500,
-  "payment_account_id": "uuid"
+  "notes": "Return damaged suits"
 }
 ```
 
-### POST /customer-returns (V1.1)
+### POST /transactions/customer-returns/draft
 
+Creates a draft for a customer return. This transaction increases inventory and creates a debit on the customer's account (Accounts Receivable).
+
+**Business Rules:**
+- Each line in the return **must** reference a `sourceTransactionLineId` from a previously `POSTED` `SALE` transaction.
+- The quantity being returned cannot exceed the original quantity sold, minus any previous returns for that same line.
+- At posting time, you must specify how the return should be handled.
+
+**Request:**
 ```json
 {
-  "transaction_date": "2026-02-01",
-  "customer_id": "uuid",
+  "customerId": "uuid",
+  "transactionDate": "2026-02-12",
   "lines": [
     {
-      "product_id": "uuid",
-      "qty": 1,
-      "source_transaction_line_id": "uuid"
+      "sourceTransactionLineId": "uuid",
+      "quantity": 1,
+      "reason": "Customer changed mind"
     }
   ],
-  "refund_amount": 1200,
-  "payment_account_id": "uuid"
+  "notes": "Process refund"
 }
 ```
 
-### POST /internal-transfers (V1.1)
+### POST /transactions/internal-transfers/draft
 
+Creates a draft for a transfer of funds between two internal payment accounts (e.g., from Cash to Bank).
+
+**Request:**
 ```json
 {
-  "transaction_date": "2026-02-01",
-  "from_payment_account_id": "uuid",
-  "to_payment_account_id": "uuid",
-  "amount": 10000
+  "fromPaymentAccountId": "uuid",
+  "toPaymentAccountId": "uuid",
+  "amount": 100000,
+  "transactionDate": "2026-02-15",
+  "notes": "Transfer cash to bank"
 }
 ```
+
+### POST /transactions/adjustments/draft
+
+Creates a draft for a stock adjustment. This is an administrative action used to correct inventory levels due to events like damage, theft, or stock count corrections.
+
+**Business Rules:**
+- Only users with the `OWNER` or `ADMIN` role can create adjustments.
+- This transaction only affects inventory; it does not create any ledger or payment entries.
+
+**Request:**
+```json
+{
+  "transactionDate": "2026-02-20",
+  "reason": "Physical stock count correction",
+  "lines": [
+    {
+      "productId": "uuid",
+      "direction": "IN",
+      "quantity": 3,
+      "reason": "Found 3 missing units during audit"
+    },
+    {
+      "productId": "uuid",
+      "direction": "OUT",
+      "quantity": 2,
+      "reason": "2 damaged units written off"
+    }
+  ],
+  "notes": "Monthly stock audit adjustments"
+}
+```
+
+### POST /transactions/:id/post
+
+This generic endpoint is used to post any `DRAFT` transaction, including the new types from Phase 6. The behavior depends on the transaction's type.
+
+**For a Customer Return, the request body is special:**
+```json
+{
+  "idempotencyKey": "uuid",
+  "returnHandling": "REFUND_NOW", // or "STORE_CREDIT"
+  "paymentAccountId": "uuid" // Required only if returnHandling is REFUND_NOW
+}
+```
+- **`REFUND_NOW`**: Immediately creates a `MONEY_OUT` payment entry from the specified `paymentAccountId` to refund the customer.
+- **`STORE_CREDIT`**: No payment entry is created. The customer's balance will reflect a credit that can be used later.
+
+For all other transaction types, only the `idempotencyKey` is required.
 
 ### GET /transactions
 
@@ -313,17 +350,98 @@ Filters:
 
 ---
 
-## Queries and Dashboards
+## Dashboard
 
-- `GET /dashboard/summary`
-- `GET /balances/suppliers/:supplier_id`
-- `GET /balances/customers/:customer_id`
-- `GET /balances/payment-accounts/:account_id`
-- `GET /stock/products/:product_id`
-- `GET /statements/suppliers/:supplier_id`
-- `GET /statements/customers/:customer_id`
-- `GET /pending/payables`
-- `GET /pending/receivables`
+### GET /dashboard/summary
+
+Provides a high-level, tenant-wide financial snapshot.
+
+**Query Parameters:**
+- `asOfDate` (optional, string): Calculate summary as of a specific date. Defaults to today.
+
+**Response (200):**
+```json
+{
+  "asOfDate": "2026-02-15",
+  "cash": { "totalBalance": 325000, "accounts": [...] },
+  "inventory": { "totalValue": 2500000, "totalProducts": 150, "lowStockCount": 12 },
+  "receivables": { "totalAmount": 250000, "overdueAmount": 120000, ... },
+  "payables": { "totalAmount": 180000, "overdueAmount": 45000, ... },
+  "recentActivity": { "todaySales": 85000, "todayPurchases": 120000, ... }
+}
+```
+
+---
+
+## Reports
+
+Provides detailed, point-in-time analytical queries.
+
+### GET /reports/suppliers/:id/balance
+- **Summary**: Retrieves a supplier's balance as of a specific date, with a breakdown of purchases vs. payments.
+- **Query Parameters**: `asOfDate` (optional).
+
+### GET /reports/customers/:id/balance
+- **Summary**: Retrieves a customer's balance as of a specific date.
+- **Query Parameters**: `asOfDate` (optional).
+
+### GET /reports/payment-accounts/:id/balance
+- **Summary**: Retrieves a payment account's balance as of a specific date.
+- **Query Parameters**: `asOfDate` (optional).
+
+### GET /reports/products/:id/stock
+- **Summary**: Retrieves a product's stock level as of a specific date, with a breakdown by movement type.
+- **Query Parameters**: `asOfDate` (optional).
+
+### GET /reports/pending-receivables
+- **Summary**: Lists all customers with outstanding balances.
+- **Query Parameters**: `asOfDate` (optional), `customerId` (optional), `minAmount` (optional).
+
+### GET /reports/pending-payables
+- **Summary**: Lists all suppliers with outstanding balances.
+- **Query Parameters**: `asOfDate` (optional), `supplierId` (optional), `minAmount` (optional).
+
+### GET /reports/suppliers/:id/statement
+- **Summary**: Generates an account statement for a supplier over a date range with a running balance.
+- **Query Parameters**: `dateFrom` (required), `dateTo` (required).
+
+### GET /reports/customers/:id/statement
+- **Summary**: Generates an account statement for a customer.
+- **Query Parameters**: `dateFrom` (required), `dateTo` (required).
+
+### GET /reports/payment-accounts/:id/statement
+- **Summary**: Generates a statement for a payment account.
+- **Query Parameters**: `dateFrom` (required), `dateTo` (required).
+
+---
+
+## Imports
+
+Provides endpoints for bulk-uploading data via CSV or XLSX files. See the `import-guide.md` for a full walkthrough.
+
+### POST /imports
+- **Summary**: Upload a file to create a new import batch.
+- **Content-Type**: `multipart/form-data`
+- **Request Body Fields**: `file`, `module` (e.g., 'SUPPLIERS', 'CUSTOMERS').
+
+### GET /imports
+- **Summary**: List all import batches, with filtering.
+- **Query Parameters**: `module`, `status`, `page`, `limit`.
+
+### GET /imports/:id
+- **Summary**: Get the detailed status of a specific import batch, including validation errors.
+- **Query Parameters**: `page`, `limit` (for paginating through rows with errors).
+
+### POST /imports/:id/map
+- **Summary**: Map the columns from the uploaded file to the system's fields and trigger validation.
+- **Request Body**: `{ "columnMappings": { "system_field": "File Header", ... } }`.
+
+### POST /imports/:id/commit
+- **Summary**: Commit a validated batch, creating records in the database.
+- **Request Body**: `{ "skipInvalidRows": true }` (optional).
+
+### POST /imports/:id/rollback
+- **Summary**: Roll back a completed import, deleting any records it created (if they have no subsequent transactions).
 
 ---
 
