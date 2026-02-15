@@ -29,6 +29,10 @@ import { ListTransactionsQueryDto } from './dto/list-transactions-query.dto';
 import { CreateSupplierPaymentDraftDto } from './dto/create-supplier-payment-draft.dto';
 import { CreateCustomerPaymentDraftDto } from './dto/create-customer-payment-draft.dto';
 import { ListAllocationsQueryDto } from './dto/list-allocations-query.dto';
+import { CreateSupplierReturnDraftDto } from './dto/create-supplier-return-draft.dto';
+import { CreateCustomerReturnDraftDto } from './dto/create-customer-return-draft.dto';
+import { CreateInternalTransferDraftDto } from './dto/create-internal-transfer-draft.dto';
+import { CreateAdjustmentDraftDto } from './dto/create-adjustment-draft.dto';
 import { ApiErrorResponse } from '../common/swagger/api-error-response.dto';
 import {
   TransactionListResponseDto,
@@ -89,6 +93,50 @@ export class TransactionsController {
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   createCustomerPaymentDraft(@Body() dto: CreateCustomerPaymentDraftDto) {
     return this.transactionsService.createCustomerPaymentDraft(dto);
+  }
+
+  @Post('supplier-returns/draft')
+  @ApiOperation({ summary: 'Create supplier return draft' })
+  @ApiOkResponse({ description: 'Supplier return draft created', type: TransactionResponseDto })
+  @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
+  @ApiNotFoundResponse({ description: 'Supplier or source line not found', type: ApiErrorResponse })
+  @ApiUnprocessableEntityResponse({ description: 'Over-return or invalid source line', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  createSupplierReturnDraft(@Body() dto: CreateSupplierReturnDraftDto) {
+    return this.transactionsService.createSupplierReturnDraft(dto);
+  }
+
+  @Post('customer-returns/draft')
+  @ApiOperation({ summary: 'Create customer return draft' })
+  @ApiOkResponse({ description: 'Customer return draft created', type: TransactionResponseDto })
+  @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
+  @ApiNotFoundResponse({ description: 'Customer or source line not found', type: ApiErrorResponse })
+  @ApiUnprocessableEntityResponse({ description: 'Over-return or invalid source line', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  createCustomerReturnDraft(@Body() dto: CreateCustomerReturnDraftDto) {
+    return this.transactionsService.createCustomerReturnDraft(dto);
+  }
+
+  @Post('internal-transfers/draft')
+  @ApiOperation({ summary: 'Create internal transfer draft' })
+  @ApiOkResponse({ description: 'Internal transfer draft created', type: TransactionResponseDto })
+  @ApiBadRequestResponse({ description: 'Validation failed or same account', type: ApiErrorResponse })
+  @ApiNotFoundResponse({ description: 'Payment account not found', type: ApiErrorResponse })
+  @ApiUnprocessableEntityResponse({ description: 'Payment account inactive', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  createInternalTransferDraft(@Body() dto: CreateInternalTransferDraftDto) {
+    return this.transactionsService.createInternalTransferDraft(dto);
+  }
+
+  @Post('adjustments/draft')
+  @ApiOperation({ summary: 'Create adjustment draft (OWNER/ADMIN only)' })
+  @ApiOkResponse({ description: 'Adjustment draft created', type: TransactionResponseDto })
+  @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
+  @ApiNotFoundResponse({ description: 'Product not found', type: ApiErrorResponse })
+  @ApiUnprocessableEntityResponse({ description: 'Product inactive', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  createAdjustmentDraft(@Body() dto: CreateAdjustmentDraftDto) {
+    return this.transactionsService.createAdjustmentDraft(dto);
   }
 
   @Get('allocations')

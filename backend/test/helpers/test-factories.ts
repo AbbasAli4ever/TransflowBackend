@@ -294,6 +294,44 @@ export async function createAndPostPurchase(
 }
 
 /**
+ * Create a supplier return draft and post it via the API.
+ * Returns the posted transaction response body.
+ */
+export async function createAndPostSupplierReturn(
+  app: INestApplication,
+  token: string,
+  options: {
+    supplierId: string;
+    lines: Array<{ sourceTransactionLineId: string; quantity: number }>;
+    transactionDate?: string;
+    idempotencyKey?: string;
+  },
+) {
+  const transactionDate =
+    options.transactionDate || new Date().toISOString().split('T')[0];
+
+  const draftRes = await request(app.getHttpServer())
+    .post('/api/v1/transactions/supplier-returns/draft')
+    .set(authHeader(token))
+    .send({
+      supplierId: options.supplierId,
+      transactionDate,
+      lines: options.lines,
+    })
+    .expect(201);
+
+  const transactionId = draftRes.body.id;
+
+  const postRes = await request(app.getHttpServer())
+    .post(`/api/v1/transactions/${transactionId}/post`)
+    .set(authHeader(token))
+    .send({ idempotencyKey: options.idempotencyKey || uuid() })
+    .expect(200);
+
+  return postRes.body;
+}
+
+/**
  * Create a sale draft and post it via the API.
  * Returns the posted transaction response body.
  */

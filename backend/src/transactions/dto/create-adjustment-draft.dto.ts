@@ -1,0 +1,31 @@
+import {
+  IsDateString,
+  IsArray,
+  ValidateNested,
+  ArrayMinSize,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { AdjustmentLineDto } from './adjustment-line.dto';
+
+export class CreateAdjustmentDraftDto {
+  @ApiProperty({ example: '2026-02-10' })
+  @IsDateString()
+  transactionDate!: string;
+
+  @ApiProperty({ type: [AdjustmentLineDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @ArrayMinSize(1)
+  @Type(() => AdjustmentLineDto)
+  lines!: AdjustmentLineDto[];
+
+  @ApiPropertyOptional({ example: 'Year-end stock reconciliation', maxLength: 1000 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  notes?: string;
+}

@@ -5,6 +5,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { v4 as uuid } from 'uuid';
 import { Prisma, TransactionType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PostTransactionDto } from './dto/post-transaction.dto';
@@ -95,9 +96,17 @@ export class PostingService {
             return this.postSupplierPayment(tx, txn, dto, userId);
           } else if (txn.type === 'CUSTOMER_PAYMENT') {
             return this.postCustomerPayment(tx, txn, dto, userId);
+          } else if (txn.type === 'SUPPLIER_RETURN') {
+            return this.postSupplierReturn(tx, txn, dto, userId);
+          } else if (txn.type === 'CUSTOMER_RETURN') {
+            return this.postCustomerReturn(tx, txn, dto, userId);
+          } else if (txn.type === 'INTERNAL_TRANSFER') {
+            return this.postInternalTransfer(tx, txn, dto, userId);
+          } else if (txn.type === 'ADJUSTMENT') {
+            return this.postAdjustment(tx, txn, dto, userId);
           } else {
             throw new BadRequestException(
-              'Only PURCHASE, SALE, SUPPLIER_PAYMENT, and CUSTOMER_PAYMENT transactions can be posted',
+              `Transaction type ${txn.type} cannot be posted`,
             );
           }
         },
@@ -403,6 +412,10 @@ export class PostingService {
       SALE: 'SAL',
       SUPPLIER_PAYMENT: 'SPY',
       CUSTOMER_PAYMENT: 'CPY',
+      SUPPLIER_RETURN: 'SRN',
+      CUSTOMER_RETURN: 'CRN',
+      INTERNAL_TRANSFER: 'TRF',
+      ADJUSTMENT: 'ADJ',
     };
     const series = String(year);
     const count = await tx.transaction.count({
@@ -542,6 +555,360 @@ export class PostingService {
     }
 
     return this.fetchFullTransaction(tx, txn.id, txn.tenantId);
+  }
+
+  private async postSupplierReturn(
+    tx: any,
+    txn: any,
+    dto: PostTransactionDto,
+    userId: string,
+  ) {
+    const transactionDate = new Date(txn.transactionDate);
+
+    // Reload lines with product and sourceLine for race-condition guard
+    const lines = await tx.transactionLine.findMany({
+      where: { transactionId: txn.id },
+      include: { product: true },
+    });
+
+    // Re-validate returnableQty within Serializable tx
+    for (const line of lines) {
+      if (!line.sourceTransactionLineId) continue;
+      const returnableQty = await this.getReturnableQty(
+        tx,
+        line.sourceTransactionLineId,
+        txn.tenantId,
+      );
+      if (line.quantity > returnableQty) {
+        throw new UnprocessableEntityException(
+          `Return quantity ${line.quantity} exceeds returnable ${returnableQty} for line ${line.sourceTransactionLineId}`,
+        );
+      }
+    }
+
+    const { documentNumber, series } = await this.generateDocumentNumber(
+      tx,
+      txn.tenantId,
+      'SUPPLIER_RETURN',
+      transactionDate.getFullYear(),
+    );
+
+    await tx.transaction.update({
+      where: { id: txn.id },
+      data: {
+        status: 'POSTED',
+        documentNumber,
+        series,
+        postedAt: new Date(),
+        idempotencyKey: dto.idempotencyKey,
+      },
+    });
+
+    await tx.inventoryMovement.createMany({
+      data: lines.map((line: any) => ({
+        tenantId: txn.tenantId,
+        transactionId: txn.id,
+        transactionLineId: line.id,
+        productId: line.productId,
+        movementType: 'SUPPLIER_RETURN_OUT',
+        quantity: line.quantity,
+        unitCostAtTime: line.unitCost ?? 0,
+        transactionDate,
+        createdBy: userId,
+      })),
+    });
+
+    await tx.ledgerEntry.create({
+      data: {
+        tenantId: txn.tenantId,
+        transactionId: txn.id,
+        entryType: 'AP_DECREASE',
+        supplierId: txn.supplierId,
+        amount: txn.totalAmount,
+        transactionDate,
+        createdBy: userId,
+      },
+    });
+
+    return this.fetchFullTransaction(tx, txn.id, txn.tenantId);
+  }
+
+  private async postCustomerReturn(
+    tx: any,
+    txn: any,
+    dto: PostTransactionDto,
+    userId: string,
+  ) {
+    const transactionDate = new Date(txn.transactionDate);
+
+    // Reload lines with product for race-condition guard + avgCost update
+    const lines = await tx.transactionLine.findMany({
+      where: { transactionId: txn.id },
+      include: { product: true },
+    });
+
+    // Re-validate returnableQty within Serializable tx
+    for (const line of lines) {
+      if (!line.sourceTransactionLineId) continue;
+      const returnableQty = await this.getReturnableQty(
+        tx,
+        line.sourceTransactionLineId,
+        txn.tenantId,
+      );
+      if (line.quantity > returnableQty) {
+        throw new UnprocessableEntityException(
+          `Return quantity ${line.quantity} exceeds returnable ${returnableQty} for line ${line.sourceTransactionLineId}`,
+        );
+      }
+    }
+
+    const { documentNumber, series } = await this.generateDocumentNumber(
+      tx,
+      txn.tenantId,
+      'CUSTOMER_RETURN',
+      transactionDate.getFullYear(),
+    );
+
+    await tx.transaction.update({
+      where: { id: txn.id },
+      data: {
+        status: 'POSTED',
+        documentNumber,
+        series,
+        postedAt: new Date(),
+        idempotencyKey: dto.idempotencyKey,
+      },
+    });
+
+    await tx.inventoryMovement.createMany({
+      data: lines.map((line: any) => ({
+        tenantId: txn.tenantId,
+        transactionId: txn.id,
+        transactionLineId: line.id,
+        productId: line.productId,
+        movementType: 'CUSTOMER_RETURN_IN',
+        quantity: line.quantity,
+        unitCostAtTime: line.product.avgCost,
+        transactionDate,
+        createdBy: userId,
+      })),
+    });
+
+    // Update avgCost for returned products (weighted average)
+    for (const line of lines) {
+      const preStock = await this.calculateProductStock(tx, txn.tenantId, line.productId);
+      // preStock does NOT yet include the CUSTOMER_RETURN_IN we just created
+      // because createMany above was just run; in Postgres within same tx it is visible
+      // so we need to subtract our new qty to get the pre-return stock
+      const stockBeforeReturn = preStock - line.quantity;
+      const oldAvg = line.product.avgCost;
+      const qty = line.quantity;
+
+      const newAvg =
+        stockBeforeReturn + qty === 0
+          ? oldAvg
+          : Math.round(
+              (stockBeforeReturn * oldAvg + qty * oldAvg) / (stockBeforeReturn + qty),
+            );
+
+      await tx.product.update({
+        where: { id: line.productId },
+        data: { avgCost: newAvg },
+      });
+    }
+
+    await tx.ledgerEntry.create({
+      data: {
+        tenantId: txn.tenantId,
+        transactionId: txn.id,
+        entryType: 'AR_DECREASE',
+        customerId: txn.customerId,
+        amount: txn.totalAmount,
+        transactionDate,
+        createdBy: userId,
+      },
+    });
+
+    if (dto.returnHandling === 'REFUND_NOW') {
+      if (!dto.paymentAccountId) {
+        throw new BadRequestException(
+          'paymentAccountId is required when returnHandling is REFUND_NOW',
+        );
+      }
+      const account = await tx.paymentAccount.findFirst({
+        where: { id: dto.paymentAccountId, tenantId: txn.tenantId },
+      });
+      if (!account || account.status !== 'ACTIVE') {
+        throw new UnprocessableEntityException('Payment account not found or inactive');
+      }
+      await tx.paymentEntry.create({
+        data: {
+          tenantId: txn.tenantId,
+          transactionId: txn.id,
+          paymentAccountId: dto.paymentAccountId,
+          entryType: 'MONEY_OUT',
+          direction: 'OUT',
+          amount: txn.totalAmount,
+          transactionDate,
+          customerId: txn.customerId,
+          createdBy: userId,
+        },
+      });
+    }
+
+    return this.fetchFullTransaction(tx, txn.id, txn.tenantId);
+  }
+
+  private async postInternalTransfer(
+    tx: any,
+    txn: any,
+    dto: PostTransactionDto,
+    userId: string,
+  ) {
+    const transactionDate = new Date(txn.transactionDate);
+
+    if (!txn.fromPaymentAccountId || !txn.toPaymentAccountId) {
+      throw new BadRequestException('Transfer accounts missing on transaction');
+    }
+
+    const fromAccount = await tx.paymentAccount.findFirst({
+      where: { id: txn.fromPaymentAccountId, tenantId: txn.tenantId },
+    });
+    if (!fromAccount || fromAccount.status !== 'ACTIVE') {
+      throw new UnprocessableEntityException('From payment account not found or inactive');
+    }
+
+    const toAccount = await tx.paymentAccount.findFirst({
+      where: { id: txn.toPaymentAccountId, tenantId: txn.tenantId },
+    });
+    if (!toAccount || toAccount.status !== 'ACTIVE') {
+      throw new UnprocessableEntityException('To payment account not found or inactive');
+    }
+
+    const { documentNumber, series } = await this.generateDocumentNumber(
+      tx,
+      txn.tenantId,
+      'INTERNAL_TRANSFER',
+      transactionDate.getFullYear(),
+    );
+
+    await tx.transaction.update({
+      where: { id: txn.id },
+      data: {
+        status: 'POSTED',
+        documentNumber,
+        series,
+        postedAt: new Date(),
+        idempotencyKey: dto.idempotencyKey,
+      },
+    });
+
+    const transferGroupId = uuid();
+
+    await tx.paymentEntry.create({
+      data: {
+        tenantId: txn.tenantId,
+        transactionId: txn.id,
+        paymentAccountId: txn.fromPaymentAccountId,
+        entryType: 'MONEY_OUT',
+        direction: 'OUT',
+        amount: txn.totalAmount,
+        transactionDate,
+        transferGroupId,
+        createdBy: userId,
+      },
+    });
+
+    await tx.paymentEntry.create({
+      data: {
+        tenantId: txn.tenantId,
+        transactionId: txn.id,
+        paymentAccountId: txn.toPaymentAccountId,
+        entryType: 'MONEY_IN',
+        direction: 'IN',
+        amount: txn.totalAmount,
+        transactionDate,
+        transferGroupId,
+        createdBy: userId,
+      },
+    });
+
+    return this.fetchFullTransaction(tx, txn.id, txn.tenantId);
+  }
+
+  private async postAdjustment(
+    tx: any,
+    txn: any,
+    dto: PostTransactionDto,
+    userId: string,
+  ) {
+    const transactionDate = new Date(txn.transactionDate);
+
+    const lines = await tx.transactionLine.findMany({
+      where: { transactionId: txn.id },
+    });
+
+    const { documentNumber, series } = await this.generateDocumentNumber(
+      tx,
+      txn.tenantId,
+      'ADJUSTMENT',
+      transactionDate.getFullYear(),
+    );
+
+    await tx.transaction.update({
+      where: { id: txn.id },
+      data: {
+        status: 'POSTED',
+        documentNumber,
+        series,
+        postedAt: new Date(),
+        idempotencyKey: dto.idempotencyKey,
+      },
+    });
+
+    for (const line of lines) {
+      // Parse direction and reason from description field: "IN|reason text"
+      const [direction] = (line.description ?? 'IN|').split('|');
+      const movementType = direction === 'OUT' ? 'ADJUSTMENT_OUT' : 'ADJUSTMENT_IN';
+
+      await tx.inventoryMovement.create({
+        data: {
+          tenantId: txn.tenantId,
+          transactionId: txn.id,
+          transactionLineId: line.id,
+          productId: line.productId,
+          movementType,
+          quantity: line.quantity,
+          unitCostAtTime: 0,
+          transactionDate,
+          createdBy: userId,
+        },
+      });
+    }
+
+    return this.fetchFullTransaction(tx, txn.id, txn.tenantId);
+  }
+
+  private async getReturnableQty(
+    tx: any,
+    sourceTransactionLineId: string,
+    tenantId: string,
+  ): Promise<number> {
+    const sourceLine = await tx.transactionLine.findFirst({
+      where: { id: sourceTransactionLineId, tenantId },
+    });
+    if (!sourceLine) throw new NotFoundException(`Source line ${sourceTransactionLineId} not found`);
+
+    const result = await tx.$queryRaw<[{ returned: bigint }]>`
+      SELECT COALESCE(SUM(tl.quantity), 0) AS returned
+      FROM transaction_lines tl
+      JOIN transactions t ON t.id = tl.transaction_id
+      WHERE tl.source_transaction_line_id = ${sourceTransactionLineId}::uuid
+        AND tl.tenant_id = ${tenantId}::uuid
+        AND t.status = 'POSTED'
+        AND t.type IN ('SUPPLIER_RETURN', 'CUSTOMER_RETURN')
+    `;
+    return sourceLine.quantity - Number(result[0]?.returned ?? 0);
   }
 
   private async autoAllocate(

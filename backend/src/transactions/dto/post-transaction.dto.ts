@@ -8,6 +8,7 @@ import {
   IsUUID,
   IsArray,
   ValidateNested,
+  IsEnum,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -49,4 +50,12 @@ export class PostTransactionDto {
   @ValidateNested({ each: true })
   @Type(() => PaymentAllocationItemDto)
   allocations?: PaymentAllocationItemDto[];
+
+  @ApiPropertyOptional({
+    enum: ['REFUND_NOW', 'STORE_CREDIT'],
+    description: 'How to handle a CUSTOMER_RETURN at posting time',
+  })
+  @IsOptional()
+  @IsEnum(['REFUND_NOW', 'STORE_CREDIT'])
+  returnHandling?: 'REFUND_NOW' | 'STORE_CREDIT';
 }
