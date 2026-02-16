@@ -385,12 +385,15 @@ export class TransactionsService {
         );
       }
 
+      const effectiveUnitCost = sourceLine.quantity > 0
+        ? Math.floor((sourceLine.lineTotal ?? 0) / sourceLine.quantity)
+        : (sourceLine.unitCost ?? 0);
       processedLines.push({
         sourceTransactionLineId: line.sourceTransactionLineId,
         productId: sourceLine.productId,
         quantity: line.quantity,
-        unitCost: sourceLine.unitCost ?? 0,
-        lineTotal: line.quantity * (sourceLine.unitCost ?? 0),
+        unitCost: effectiveUnitCost,
+        lineTotal: line.quantity * effectiveUnitCost,
       });
     }
 
@@ -501,12 +504,15 @@ export class TransactionsService {
         );
       }
 
+      const effectiveUnitPrice = sourceLine.quantity > 0
+        ? Math.floor((sourceLine.lineTotal ?? 0) / sourceLine.quantity)
+        : (sourceLine.unitPrice ?? 0);
       processedLines.push({
         sourceTransactionLineId: line.sourceTransactionLineId,
         productId: sourceLine.productId,
         quantity: line.quantity,
-        unitPrice: sourceLine.unitPrice ?? 0,
-        lineTotal: line.quantity * (sourceLine.unitPrice ?? 0),
+        unitPrice: effectiveUnitPrice,
+        lineTotal: line.quantity * effectiveUnitPrice,
       });
     }
 

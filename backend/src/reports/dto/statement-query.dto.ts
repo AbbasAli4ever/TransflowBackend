@@ -1,5 +1,6 @@
-import { IsNotEmpty, Matches, registerDecorator, ValidationArguments, ValidationOptions } from 'class-validator';
+import { IsNotEmpty, registerDecorator, ValidationArguments, ValidationOptions } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { IsCalendarDate } from '../../common/validators/is-calendar-date.validator';
 
 function IsNotBefore(property: string, validationOptions?: ValidationOptions) {
   return function (object: object, propertyName: string) {
@@ -27,12 +28,12 @@ function IsNotBefore(property: string, validationOptions?: ValidationOptions) {
 export class StatementQueryDto {
   @ApiProperty({ example: '2026-01-01', description: 'Start date inclusive (YYYY-MM-DD)' })
   @IsNotEmpty()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'dateFrom must be in YYYY-MM-DD format' })
+  @IsCalendarDate()
   dateFrom!: string;
 
   @ApiProperty({ example: '2026-02-20', description: 'End date inclusive (YYYY-MM-DD)' })
   @IsNotEmpty()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'dateTo must be in YYYY-MM-DD format' })
+  @IsCalendarDate()
   @IsNotBefore('dateFrom', { message: 'dateTo must be on or after dateFrom' })
   dateTo!: string;
 }

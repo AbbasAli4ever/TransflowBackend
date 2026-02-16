@@ -7,19 +7,19 @@ export class RegisterDto {
   @IsString()
   @IsNotEmpty()
   @Length(2, 100)
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   tenantName!: string;
 
   @ApiProperty({ example: 'Zaeem Hassan', description: 'Owner full name' })
   @IsString()
   @IsNotEmpty()
   @Length(2, 100)
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   fullName!: string;
 
   @ApiProperty({ example: 'zaeem@acme.com', description: 'Owner email address' })
   @IsEmail()
-  @Transform(({ value }) => value?.trim().toLowerCase())
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
   email!: string;
 
   @ApiProperty({ example: 'MyPass123', description: 'Min 8 chars, 1 uppercase, 1 lowercase, 1 number' })

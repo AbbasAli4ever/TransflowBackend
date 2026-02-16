@@ -1,7 +1,30 @@
-import { IsOptional, IsEnum, IsDateString, IsUUID, IsIn } from 'class-validator';
+import { IsOptional, IsEnum, IsDateString, IsUUID, IsIn, registerDecorator, ValidationArguments, ValidationOptions } from 'class-validator';
 import { TransactionType, TransactionStatus } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+
+function IsNotBefore(property: string, validationOptions?: ValidationOptions) {
+  return function (object: object, propertyName: string) {
+    registerDecorator({
+      name: 'isNotBefore',
+      target: (object as any).constructor,
+      propertyName,
+      constraints: [property],
+      options: validationOptions,
+      validator: {
+        validate(value: any, args: ValidationArguments) {
+          const [relatedProp] = args.constraints;
+          const relatedValue = (args.object as any)[relatedProp];
+          if (typeof value !== 'string' || typeof relatedValue !== 'string') return true;
+          return value >= relatedValue;
+        },
+        defaultMessage(args: ValidationArguments) {
+          return `${args.property} must be on or after ${args.constraints[0]}`;
+        },
+      },
+    });
+  };
+}
 
 export class ListTransactionsQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ enum: TransactionType })
@@ -22,6 +45,7 @@ export class ListTransactionsQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ example: '2026-02-11' })
   @IsOptional()
   @IsDateString()
+  @IsNotBefore('dateFrom', { message: 'dateTo must be on or after dateFrom' })
   dateTo?: string;
 
   @ApiPropertyOptional({ example: 'supplier-uuid' })

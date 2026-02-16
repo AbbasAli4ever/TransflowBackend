@@ -18,7 +18,7 @@ export class CreateProductDto {
   @IsString()
   @MaxLength(50)
   @Matches(/^[A-Z0-9\-_]*$/, { message: 'SKU must contain only uppercase letters, numbers, hyphens, and underscores' })
-  @Transform(({ value }) => value?.toUpperCase())
+  @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase() : value))
   sku?: string;
 
   @ApiPropertyOptional({ example: 'Grocery', maxLength: 100 })

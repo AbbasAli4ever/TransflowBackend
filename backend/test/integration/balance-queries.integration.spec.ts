@@ -246,7 +246,7 @@ describe('Balance & Stock Queries (Integration)', () => {
 
       expect(res.body.customerId).toBe(customer.id);
       expect(res.body.totalSales).toBe(0);
-      expect(res.body.totalReceived).toBe(0);
+      expect(res.body.totalPayments).toBe(0);
       expect(res.body.currentBalance).toBe(0);
     });
 
@@ -282,7 +282,7 @@ describe('Balance & Stock Queries (Integration)', () => {
         .expect(200);
 
       expect(res.body.totalSales).toBe(4800); // 8 * 600
-      expect(res.body.totalReceived).toBe(0);
+      expect(res.body.totalPayments).toBe(0);
       expect(res.body.currentBalance).toBe(4800);
     });
 
@@ -319,7 +319,7 @@ describe('Balance & Stock Queries (Integration)', () => {
         .expect(200);
 
       expect(res.body.totalSales).toBe(2500); // 5 * 500
-      expect(res.body.totalReceived).toBe(1000);
+      expect(res.body.totalPayments).toBe(1000);
       expect(res.body.currentBalance).toBe(1500);
     });
 

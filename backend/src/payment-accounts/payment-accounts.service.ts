@@ -86,6 +86,10 @@ export class PaymentAccountsService {
     const tenantId = getContext()?.tenantId;
     if (!tenantId) throw new UnauthorizedException();
 
+    if (Object.keys(dto).filter((k) => (dto as any)[k] !== undefined).length === 0) {
+      throw new BadRequestException('At least one field must be provided for update');
+    }
+
     const existing = await this.prisma.paymentAccount.findFirst({
       where: { id, tenantId },
     });

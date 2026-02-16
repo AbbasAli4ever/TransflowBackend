@@ -75,8 +75,11 @@ export class CustomerBalanceResponseDto {
   @ApiProperty({ example: 150000, description: 'Total sales in PKR (integer)' })
   totalSales!: number;
 
-  @ApiProperty({ example: 50000, description: 'Total received in PKR (integer)' })
-  totalReceived!: number;
+  @ApiProperty({ example: 40000, description: 'Total payments received in PKR (integer)' })
+  totalPayments!: number;
+
+  @ApiProperty({ example: 10000, description: 'Total return credits in PKR (integer)' })
+  totalReturns!: number;
 
   @ApiProperty({ example: 100000, description: 'Current balance in PKR (integer)' })
   currentBalance!: number;

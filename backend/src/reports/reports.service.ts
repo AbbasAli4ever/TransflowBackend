@@ -140,14 +140,15 @@ export class ReportsService {
       }>
     >`
       SELECT
-        COUNT(CASE WHEN direction = 'IN' THEN 1 END)::int              AS "moneyInCount",
-        COALESCE(SUM(CASE WHEN direction = 'IN' THEN amount ELSE 0 END), 0)::bigint  AS "moneyIn",
-        COUNT(CASE WHEN direction = 'OUT' THEN 1 END)::int             AS "moneyOutCount",
-        COALESCE(SUM(CASE WHEN direction = 'OUT' THEN amount ELSE 0 END), 0)::bigint AS "moneyOut"
-      FROM payment_entries
-      WHERE tenant_id = ${tenantId}::uuid
-        AND payment_account_id = ${id}::uuid
-        AND transaction_date <= ${asOfDate}::date
+        COUNT(CASE WHEN pe.direction = 'IN' THEN 1 END)::int              AS "moneyInCount",
+        COALESCE(SUM(CASE WHEN pe.direction = 'IN' THEN pe.amount ELSE 0 END), 0)::bigint  AS "moneyIn",
+        COUNT(CASE WHEN pe.direction = 'OUT' THEN 1 END)::int             AS "moneyOutCount",
+        COALESCE(SUM(CASE WHEN pe.direction = 'OUT' THEN pe.amount ELSE 0 END), 0)::bigint AS "moneyOut"
+      FROM payment_entries pe
+      JOIN transactions t ON t.id = pe.transaction_id AND t.status = 'POSTED'
+      WHERE pe.tenant_id = ${tenantId}::uuid
+        AND pe.payment_account_id = ${id}::uuid
+        AND pe.transaction_date <= ${asOfDate}::date
     `;
 
     const r = rows[0];
@@ -615,12 +616,13 @@ export class ReportsService {
       async (tx) => Promise.all([
         tx.$queryRaw<Array<{ historicalBalance: bigint }>>`
           SELECT COALESCE(
-            SUM(CASE WHEN direction = 'IN' THEN amount ELSE -amount END), 0
+            SUM(CASE WHEN pe.direction = 'IN' THEN pe.amount ELSE -pe.amount END), 0
           )::bigint AS "historicalBalance"
-          FROM payment_entries
-          WHERE tenant_id = ${tenantId}::uuid
-            AND payment_account_id = ${id}::uuid
-            AND transaction_date < ${dateFrom}::date
+          FROM payment_entries pe
+          JOIN transactions t ON t.id = pe.transaction_id AND t.status = 'POSTED'
+          WHERE pe.tenant_id = ${tenantId}::uuid
+            AND pe.payment_account_id = ${id}::uuid
+            AND pe.transaction_date < ${dateFrom}::date
         `,
         tx.$queryRaw<
           Array<{ date: Date; documentNumber: string | null; type: string; moneyIn: bigint; moneyOut: bigint }>
@@ -632,7 +634,7 @@ export class ReportsService {
             CASE WHEN pe.direction = 'IN'  THEN pe.amount ELSE 0 END::bigint AS "moneyIn",
             CASE WHEN pe.direction = 'OUT' THEN pe.amount ELSE 0 END::bigint AS "moneyOut"
           FROM payment_entries pe
-          JOIN transactions t ON t.id = pe.transaction_id
+          JOIN transactions t ON t.id = pe.transaction_id AND t.status = 'POSTED'
           WHERE pe.tenant_id = ${tenantId}::uuid
             AND pe.payment_account_id = ${id}::uuid
             AND pe.transaction_date >= ${dateFrom}::date

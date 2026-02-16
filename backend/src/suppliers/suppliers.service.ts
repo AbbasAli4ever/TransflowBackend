@@ -83,6 +83,10 @@ export class SuppliersService {
     const tenantId = getContext()?.tenantId;
     if (!tenantId) throw new UnauthorizedException();
 
+    if (Object.keys(dto).filter((k) => (dto as any)[k] !== undefined).length === 0) {
+      throw new BadRequestException('At least one field must be provided for update');
+    }
+
     const existing = await this.prisma.supplier.findFirst({
       where: { id, tenantId },
     });
@@ -212,10 +216,24 @@ export class SuppliersService {
 
     const totalOutstanding = rows.reduce((sum, r) => sum + safeMoney(r.outstanding), 0);
 
+    const creditRows = await this.prisma.$queryRaw<Array<{ return_credits: bigint }>>`
+      SELECT COALESCE(SUM(le.amount), 0)::bigint AS return_credits
+      FROM ledger_entries le
+      JOIN transactions t ON t.id = le.transaction_id
+      WHERE le.tenant_id = ${tenantId}::uuid
+        AND le.supplier_id = ${id}::uuid
+        AND le.entry_type = 'AP_DECREASE'
+        AND t.type = 'SUPPLIER_RETURN'
+        AND t.status = 'POSTED'
+    `;
+    const unappliedCredits = safeMoney(creditRows[0]?.return_credits);
+
     return {
       supplierId: id,
       supplierName: supplier.name,
       totalOutstanding,
+      unappliedCredits,
+      netOutstanding: Math.max(0, totalOutstanding - unappliedCredits),
       documents: rows.map((r) => ({
         id: r.id,
         documentNumber: r.document_number,

@@ -104,7 +104,7 @@ describe('Auth API (Integration)', () => {
         .send(validRegistration)
         .expect(409);
 
-      expect(response.body.message).toContain('Email already exists');
+      expect(response.body.message).toContain('Registration failed');
     });
 
     it('should reject duplicate email (case-insensitive)', async () => {
@@ -122,7 +122,7 @@ describe('Auth API (Integration)', () => {
         })
         .expect(409);
 
-      expect(response.body.message).toContain('Email already exists');
+      expect(response.body.message).toContain('Registration failed');
     });
 
     describe('Validation', () => {

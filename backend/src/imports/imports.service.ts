@@ -357,23 +357,30 @@ export class ImportsService {
             const amount = parseInt(data['amount'], 10);
             // Task 7.3: fetch current value before overwriting so rollback can restore it
             const account = await tx.paymentAccount.findFirst({
-              where: { tenantId, name: accountName, status: 'ACTIVE' },
+              where: { tenantId, name: { equals: accountName, mode: 'insensitive' }, status: 'ACTIVE' },
               select: { id: true, openingBalance: true },
             });
             if (!account) {
               failReason = `Payment account "${accountName}" not found`;
             } else {
-              await tx.paymentAccount.update({
-                where: { id: account.id },
-                data: { openingBalance: amount },
+              const entryCount = await tx.paymentEntry.count({
+                where: { paymentAccountId: account.id },
               });
-              // Task 7.3: embed previousOpeningBalance in rawDataJson for rollback restoration
-              updatedRawData = {
-                ...(row.rawDataJson as Record<string, unknown>),
-                previousOpeningBalance: account.openingBalance,
-              };
-              recordId = account.id;
-              recordType = 'PAYMENT_ACCOUNT';
+              if (entryCount > 0) {
+                failReason = `Cannot overwrite opening balance for account "${accountName}": account has existing transaction history`;
+              } else {
+                await tx.paymentAccount.update({
+                  where: { id: account.id },
+                  data: { openingBalance: amount },
+                });
+                // Task 7.3: embed previousOpeningBalance in rawDataJson for rollback restoration
+                updatedRawData = {
+                  ...(row.rawDataJson as Record<string, unknown>),
+                  previousOpeningBalance: account.openingBalance,
+                };
+                recordId = account.id;
+                recordType = 'PAYMENT_ACCOUNT';
+              }
             }
           }
         } catch (err: any) {

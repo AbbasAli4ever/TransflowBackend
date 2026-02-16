@@ -1,9 +1,10 @@
-import { IsOptional, Matches } from 'class-validator';
+import { IsOptional } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { IsCalendarDate } from '../../common/validators/is-calendar-date.validator';
 
 export class BalanceQueryDto {
   @ApiPropertyOptional({ example: '2026-02-20', description: 'Point-in-time date (defaults to today)' })
   @IsOptional()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'asOfDate must be in YYYY-MM-DD format' })
+  @IsCalendarDate()
   asOfDate?: string;
 }

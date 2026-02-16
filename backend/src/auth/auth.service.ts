@@ -45,7 +45,7 @@ export class AuthService {
         return { tenant, user };
       });
     } catch (e: any) {
-      if (e.code === 'P2002') throw new ConflictException('Email already exists');
+      if (e.code === 'P2002') throw new ConflictException('Registration failed');
       throw e;
     }
 

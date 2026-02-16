@@ -83,6 +83,10 @@ export class CustomersService {
     const tenantId = getContext()?.tenantId;
     if (!tenantId) throw new UnauthorizedException();
 
+    if (Object.keys(dto).filter((k) => (dto as any)[k] !== undefined).length === 0) {
+      throw new BadRequestException('At least one field must be provided for update');
+    }
+
     const existing = await this.prisma.customer.findFirst({
       where: { id, tenantId },
     });
@@ -149,23 +153,27 @@ export class CustomersService {
     if (!customer) throw new NotFoundException('Customer not found');
 
     const result = await this.prisma.$queryRaw<
-      Array<{ ar_increase: bigint; ar_decrease: bigint }>
+      Array<{ ar_increase: bigint; ar_payments: bigint; ar_returns: bigint }>
     >`
       SELECT
-        COALESCE(SUM(CASE WHEN entry_type = 'AR_INCREASE' THEN amount ELSE 0 END), 0) AS ar_increase,
-        COALESCE(SUM(CASE WHEN entry_type = 'AR_DECREASE' THEN amount ELSE 0 END), 0) AS ar_decrease
-      FROM ledger_entries
-      WHERE tenant_id = ${tenantId}::uuid AND customer_id = ${id}::uuid
+        COALESCE(SUM(CASE WHEN le.entry_type = 'AR_INCREASE' THEN le.amount ELSE 0 END), 0) AS ar_increase,
+        COALESCE(SUM(CASE WHEN le.entry_type = 'AR_DECREASE' AND t.type != 'CUSTOMER_RETURN' THEN le.amount ELSE 0 END), 0) AS ar_payments,
+        COALESCE(SUM(CASE WHEN le.entry_type = 'AR_DECREASE' AND t.type = 'CUSTOMER_RETURN' THEN le.amount ELSE 0 END), 0) AS ar_returns
+      FROM ledger_entries le
+      JOIN transactions t ON t.id = le.transaction_id
+      WHERE le.tenant_id = ${tenantId}::uuid AND le.customer_id = ${id}::uuid
     `;
 
     const arIncrease = safeMoney(result[0]?.ar_increase);
-    const arDecrease = safeMoney(result[0]?.ar_decrease);
+    const arPayments = safeMoney(result[0]?.ar_payments);
+    const arReturns = safeMoney(result[0]?.ar_returns);
 
     return {
       customerId: id,
       totalSales: arIncrease,
-      totalReceived: arDecrease,
-      currentBalance: arIncrease - arDecrease,
+      totalPayments: arPayments,
+      totalReturns: arReturns,
+      currentBalance: arIncrease - arPayments - arReturns,
     };
   }
 
@@ -208,10 +216,24 @@ export class CustomersService {
 
     const totalOutstanding = rows.reduce((sum, r) => sum + safeMoney(r.outstanding), 0);
 
+    const creditRows = await this.prisma.$queryRaw<Array<{ return_credits: bigint }>>`
+      SELECT COALESCE(SUM(le.amount), 0)::bigint AS return_credits
+      FROM ledger_entries le
+      JOIN transactions t ON t.id = le.transaction_id
+      WHERE le.tenant_id = ${tenantId}::uuid
+        AND le.customer_id = ${id}::uuid
+        AND le.entry_type = 'AR_DECREASE'
+        AND t.type = 'CUSTOMER_RETURN'
+        AND t.status = 'POSTED'
+    `;
+    const unappliedCredits = safeMoney(creditRows[0]?.return_credits);
+
     return {
       customerId: id,
       customerName: customer.name,
       totalOutstanding,
+      unappliedCredits,
+      netOutstanding: Math.max(0, totalOutstanding - unappliedCredits),
       documents: rows.map((r) => ({
         id: r.id,
         documentNumber: r.document_number,

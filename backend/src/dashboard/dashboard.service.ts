@@ -171,23 +171,25 @@ export class DashboardService {
           AND pt.status = 'POSTED'
         GROUP BY a.applies_to_transaction_id
       ),
-      overdue_customers AS (
-        SELECT DISTINCT t.customer_id
+      overdue_amounts AS (
+        SELECT t.customer_id, SUM(t.total_amount - COALESCE(a.paid, 0)) AS overdue_amount
         FROM transactions t
         LEFT JOIN alloc_sums a ON a.txn_id = t.id
         WHERE t.tenant_id = ${tenantId}::uuid
           AND t.type = 'SALE'
           AND t.status = 'POSTED'
+          AND t.transaction_date <= ${asOfDate}::date
           AND t.transaction_date < ${overdueThreshold}::date
           AND t.total_amount - COALESCE(a.paid, 0) > 0
+        GROUP BY t.customer_id
       )
       SELECT
-        COUNT(ab.customer_id)::int                                                                  AS "customerCount",
-        COALESCE(SUM(ab.balance), 0)::bigint                                                       AS "totalAmount",
-        COUNT(oc.customer_id)::int                                                                  AS "overdueCount",
-        COALESCE(SUM(CASE WHEN oc.customer_id IS NOT NULL THEN ab.balance ELSE 0 END), 0)::bigint  AS "overdueAmount"
+        COUNT(ab.customer_id)::int                               AS "customerCount",
+        COALESCE(SUM(ab.balance), 0)::bigint                    AS "totalAmount",
+        COUNT(oa.customer_id)::int                              AS "overdueCount",
+        COALESCE(SUM(oa.overdue_amount), 0)::bigint             AS "overdueAmount"
       FROM ar_balances ab
-      LEFT JOIN overdue_customers oc ON oc.customer_id = ab.customer_id
+      LEFT JOIN overdue_amounts oa ON oa.customer_id = ab.customer_id
     `;
   }
 
@@ -216,23 +218,25 @@ export class DashboardService {
           AND pt.status = 'POSTED'
         GROUP BY a.applies_to_transaction_id
       ),
-      overdue_suppliers AS (
-        SELECT DISTINCT t.supplier_id
+      overdue_amounts AS (
+        SELECT t.supplier_id, SUM(t.total_amount - COALESCE(a.paid, 0)) AS overdue_amount
         FROM transactions t
         LEFT JOIN alloc_sums a ON a.txn_id = t.id
         WHERE t.tenant_id = ${tenantId}::uuid
           AND t.type = 'PURCHASE'
           AND t.status = 'POSTED'
+          AND t.transaction_date <= ${asOfDate}::date
           AND t.transaction_date < ${overdueThreshold}::date
           AND t.total_amount - COALESCE(a.paid, 0) > 0
+        GROUP BY t.supplier_id
       )
       SELECT
-        COUNT(ab.supplier_id)::int                                                                  AS "supplierCount",
-        COALESCE(SUM(ab.balance), 0)::bigint                                                       AS "totalAmount",
-        COUNT(os.supplier_id)::int                                                                  AS "overdueCount",
-        COALESCE(SUM(CASE WHEN os.supplier_id IS NOT NULL THEN ab.balance ELSE 0 END), 0)::bigint  AS "overdueAmount"
+        COUNT(ab.supplier_id)::int                              AS "supplierCount",
+        COALESCE(SUM(ab.balance), 0)::bigint                   AS "totalAmount",
+        COUNT(oa.supplier_id)::int                             AS "overdueCount",
+        COALESCE(SUM(oa.overdue_amount), 0)::bigint            AS "overdueAmount"
       FROM ap_balances ab
-      LEFT JOIN overdue_suppliers os ON os.supplier_id = ab.supplier_id
+      LEFT JOIN overdue_amounts oa ON oa.supplier_id = ab.supplier_id
     `;
   }
 

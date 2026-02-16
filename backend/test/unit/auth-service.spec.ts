@@ -116,7 +116,7 @@ describe('AuthService (Unit)', () => {
       mockedHash.mockResolvedValue('hashed' as never);
 
       await expect(service.register(validRegisterDto)).rejects.toThrow(ConflictException);
-      await expect(service.register(validRegisterDto)).rejects.toThrow('Email already exists');
+      await expect(service.register(validRegisterDto)).rejects.toThrow('Registration failed');
     });
 
     it('should trim tenant name and full name', async () => {

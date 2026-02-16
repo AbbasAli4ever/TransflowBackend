@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   Body,
   Controller,
+  DefaultValuePipe,
   Get,
   HttpCode,
   HttpStatus,
@@ -107,9 +109,11 @@ export class ImportsController {
   @ApiNotFoundResponse({ description: 'Import batch not found' })
   detail(
     @Param('id', ParseUUIDPipe) id: string,
-    @Query('page', new ParseIntPipe({ optional: true })) page?: number,
-    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ) {
+    if (page < 1) throw new BadRequestException('page must be >= 1');
+    if (limit < 1 || limit > 100) throw new BadRequestException('limit must be between 1 and 100');
     return this.importsService.getBatchDetail(id, page, limit);
   }
 }

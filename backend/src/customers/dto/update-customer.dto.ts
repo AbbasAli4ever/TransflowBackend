@@ -7,7 +7,7 @@ export class UpdateCustomerDto {
   @IsOptional()
   @IsString()
   @Length(2, 200)
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   name?: string;
 
   @ApiPropertyOptional({ example: '03001234567', maxLength: 20 })
