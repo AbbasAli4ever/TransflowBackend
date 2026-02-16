@@ -19,8 +19,9 @@ export class CreateSupplierPaymentDraftDto {
   @IsDateString()
   transactionDate!: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, example: 'Advance payment for invoice INV-1001', maxLength: 1000 })
   @IsOptional()
+  @IsString()
   @MaxLength(1000)
   notes?: string;
 

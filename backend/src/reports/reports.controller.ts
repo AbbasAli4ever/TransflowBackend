@@ -16,6 +16,17 @@ import { PendingReceivablesQueryDto } from './dto/pending-receivables-query.dto'
 import { PendingPayablesQueryDto } from './dto/pending-payables-query.dto';
 import { ApiErrorResponse } from '../common/swagger/api-error-response.dto';
 import { Roles } from '../common/decorators/roles.decorator';
+import {
+  CustomerBalanceReportResponseDto,
+  CustomerStatementReportResponseDto,
+  PaymentAccountBalanceReportResponseDto,
+  PaymentAccountStatementReportResponseDto,
+  PendingPayablesReportResponseDto,
+  PendingReceivablesReportResponseDto,
+  ProductStockReportResponseDto,
+  SupplierBalanceReportResponseDto,
+  SupplierStatementReportResponseDto,
+} from './dto/report-response.dto';
 
 @ApiTags('Reports')
 @ApiBearerAuth('bearer')
@@ -30,7 +41,7 @@ export class ReportsController {
   @ApiOperation({ summary: 'Supplier balance report (point-in-time)' })
   @ApiParam({ name: 'id', description: 'Supplier UUID' })
   @ApiQuery({ name: 'asOfDate', required: false, type: String, example: '2026-02-20' })
-  @ApiOkResponse({ description: 'Supplier balance with breakdown' })
+  @ApiOkResponse({ description: 'Supplier balance with breakdown', type: SupplierBalanceReportResponseDto })
   @ApiNotFoundResponse({ description: 'Supplier not found', type: ApiErrorResponse })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   getSupplierBalance(
@@ -44,7 +55,7 @@ export class ReportsController {
   @ApiOperation({ summary: 'Customer balance report (point-in-time)' })
   @ApiParam({ name: 'id', description: 'Customer UUID' })
   @ApiQuery({ name: 'asOfDate', required: false, type: String, example: '2026-02-20' })
-  @ApiOkResponse({ description: 'Customer balance with breakdown' })
+  @ApiOkResponse({ description: 'Customer balance with breakdown', type: CustomerBalanceReportResponseDto })
   @ApiNotFoundResponse({ description: 'Customer not found', type: ApiErrorResponse })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   getCustomerBalance(
@@ -58,7 +69,7 @@ export class ReportsController {
   @ApiOperation({ summary: 'Payment account balance report (point-in-time)' })
   @ApiParam({ name: 'id', description: 'Payment account UUID' })
   @ApiQuery({ name: 'asOfDate', required: false, type: String, example: '2026-02-20' })
-  @ApiOkResponse({ description: 'Payment account balance with breakdown' })
+  @ApiOkResponse({ description: 'Payment account balance with breakdown', type: PaymentAccountBalanceReportResponseDto })
   @ApiNotFoundResponse({ description: 'Payment account not found', type: ApiErrorResponse })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   getPaymentAccountBalance(
@@ -72,7 +83,7 @@ export class ReportsController {
   @ApiOperation({ summary: 'Product stock report (point-in-time)' })
   @ApiParam({ name: 'id', description: 'Product UUID' })
   @ApiQuery({ name: 'asOfDate', required: false, type: String, example: '2026-02-20' })
-  @ApiOkResponse({ description: 'Product stock with movement breakdown' })
+  @ApiOkResponse({ description: 'Product stock with movement breakdown', type: ProductStockReportResponseDto })
   @ApiNotFoundResponse({ description: 'Product not found', type: ApiErrorResponse })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   getProductStock(
@@ -89,7 +100,7 @@ export class ReportsController {
   @ApiQuery({ name: 'asOfDate', required: false, type: String })
   @ApiQuery({ name: 'customerId', required: false, type: String })
   @ApiQuery({ name: 'minAmount', required: false, type: Number })
-  @ApiOkResponse({ description: 'Pending receivables list with open documents' })
+  @ApiOkResponse({ description: 'Pending receivables list with open documents', type: PendingReceivablesReportResponseDto })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   getPendingReceivables(@Query() query: PendingReceivablesQueryDto) {
     return this.reportsService.getPendingReceivables(query);
@@ -100,7 +111,7 @@ export class ReportsController {
   @ApiQuery({ name: 'asOfDate', required: false, type: String })
   @ApiQuery({ name: 'supplierId', required: false, type: String })
   @ApiQuery({ name: 'minAmount', required: false, type: Number })
-  @ApiOkResponse({ description: 'Pending payables list with open documents' })
+  @ApiOkResponse({ description: 'Pending payables list with open documents', type: PendingPayablesReportResponseDto })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   getPendingPayables(@Query() query: PendingPayablesQueryDto) {
     return this.reportsService.getPendingPayables(query);
@@ -113,7 +124,7 @@ export class ReportsController {
   @ApiParam({ name: 'id', description: 'Supplier UUID' })
   @ApiQuery({ name: 'dateFrom', required: true, type: String, example: '2026-01-01' })
   @ApiQuery({ name: 'dateTo', required: true, type: String, example: '2026-02-20' })
-  @ApiOkResponse({ description: 'Supplier statement with opening/closing balance and ledger entries' })
+  @ApiOkResponse({ description: 'Supplier statement with opening/closing balance and ledger entries', type: SupplierStatementReportResponseDto })
   @ApiNotFoundResponse({ description: 'Supplier not found', type: ApiErrorResponse })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   getSupplierStatement(
@@ -128,7 +139,7 @@ export class ReportsController {
   @ApiParam({ name: 'id', description: 'Customer UUID' })
   @ApiQuery({ name: 'dateFrom', required: true, type: String, example: '2026-01-01' })
   @ApiQuery({ name: 'dateTo', required: true, type: String, example: '2026-02-20' })
-  @ApiOkResponse({ description: 'Customer statement with opening/closing balance and ledger entries' })
+  @ApiOkResponse({ description: 'Customer statement with opening/closing balance and ledger entries', type: CustomerStatementReportResponseDto })
   @ApiNotFoundResponse({ description: 'Customer not found', type: ApiErrorResponse })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   getCustomerStatement(
@@ -143,7 +154,7 @@ export class ReportsController {
   @ApiParam({ name: 'id', description: 'Payment account UUID' })
   @ApiQuery({ name: 'dateFrom', required: true, type: String, example: '2026-01-01' })
   @ApiQuery({ name: 'dateTo', required: true, type: String, example: '2026-02-20' })
-  @ApiOkResponse({ description: 'Payment account statement with opening/closing balance' })
+  @ApiOkResponse({ description: 'Payment account statement with opening/closing balance', type: PaymentAccountStatementReportResponseDto })
   @ApiNotFoundResponse({ description: 'Payment account not found', type: ApiErrorResponse })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   getPaymentAccountStatement(

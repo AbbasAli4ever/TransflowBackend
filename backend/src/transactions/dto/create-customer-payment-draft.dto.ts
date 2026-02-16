@@ -19,8 +19,9 @@ export class CreateCustomerPaymentDraftDto {
   @IsDateString()
   transactionDate!: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, example: 'Receipt against invoice INV-2001', maxLength: 1000 })
   @IsOptional()
+  @IsString()
   @MaxLength(1000)
   notes?: string;
 

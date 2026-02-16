@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CustomerComputedDto {
   @ApiProperty({ example: 0, description: 'Derived total sales in PKR (integer)' })
@@ -7,39 +7,39 @@ export class CustomerComputedDto {
   @ApiProperty({ example: 0, description: 'Derived current balance in PKR (integer)' })
   currentBalance!: number;
 
-  @ApiProperty({ example: null, nullable: true })
+  @ApiProperty({ type: String, example: null, nullable: true, format: 'date-time' })
   lastSaleDate!: string | null;
 }
 
 export class CustomerResponseDto {
-  @ApiProperty({ example: '9f4b6e2c-0a2d-4cc5-8c4d-1a4a88c81a88' })
+  @ApiProperty({ example: '9f4b6e2c-0a2d-4cc5-8c4d-1a4a88c81a88', format: 'uuid' })
   id!: string;
 
-  @ApiProperty({ example: '6c6f7f48-3d5b-4a3f-9b1d-9c0d73b0c3d2' })
+  @ApiProperty({ example: '6c6f7f48-3d5b-4a3f-9b1d-9c0d73b0c3d2', format: 'uuid' })
   tenantId!: string;
 
   @ApiProperty({ example: 'Zaeem Hassan' })
   name!: string;
 
-  @ApiProperty({ example: '03001234567', required: false })
+  @ApiPropertyOptional({ type: String, example: '03001234567', nullable: true })
   phone?: string | null;
 
-  @ApiProperty({ example: 'Street 10, Karachi', required: false })
+  @ApiPropertyOptional({ type: String, example: 'Street 10, Karachi', nullable: true })
   address?: string | null;
 
-  @ApiProperty({ example: 'VIP customer', required: false })
+  @ApiPropertyOptional({ type: String, example: 'VIP customer', nullable: true })
   notes?: string | null;
 
   @ApiProperty({ example: 'ACTIVE' })
   status!: string;
 
-  @ApiProperty({ example: '2026-02-11T10:00:00.000Z' })
+  @ApiProperty({ example: '2026-02-11T10:00:00.000Z', format: 'date-time' })
   createdAt!: string;
 
-  @ApiProperty({ example: '2026-02-11T10:00:00.000Z' })
+  @ApiProperty({ example: '2026-02-11T10:00:00.000Z', format: 'date-time' })
   updatedAt!: string;
 
-  @ApiProperty({ example: 'd2f2c7b5-0c2a-4aa2-9c60-6b3f94b7e8d4', required: false })
+  @ApiPropertyOptional({ type: String, example: 'd2f2c7b5-0c2a-4aa2-9c60-6b3f94b7e8d4', format: 'uuid', nullable: true })
   createdBy?: string | null;
 
   @ApiProperty({ type: CustomerComputedDto })
@@ -69,7 +69,7 @@ export class CustomerListResponseDto {
 }
 
 export class CustomerBalanceResponseDto {
-  @ApiProperty({ example: '9f4b6e2c-0a2d-4cc5-8c4d-1a4a88c81a88' })
+  @ApiProperty({ example: '9f4b6e2c-0a2d-4cc5-8c4d-1a4a88c81a88', format: 'uuid' })
   customerId!: string;
 
   @ApiProperty({ example: 150000, description: 'Total sales in PKR (integer)' })
@@ -83,4 +83,44 @@ export class CustomerBalanceResponseDto {
 
   @ApiProperty({ example: 100000, description: 'Current balance in PKR (integer)' })
   currentBalance!: number;
+}
+
+export class CustomerOpenDocumentDto {
+  @ApiProperty({ example: '0d2bc4f0-5429-4f2d-a9ac-bf4a030f2556', format: 'uuid' })
+  id!: string;
+
+  @ApiPropertyOptional({ type: String, example: 'SAL-0001', nullable: true })
+  documentNumber?: string | null;
+
+  @ApiProperty({ example: '2026-02-11T00:00:00.000Z', format: 'date-time' })
+  transactionDate!: string;
+
+  @ApiProperty({ example: 60000, description: 'Total amount in PKR (integer)' })
+  totalAmount!: number;
+
+  @ApiProperty({ example: 20000, description: 'Paid amount in PKR (integer)' })
+  paidAmount!: number;
+
+  @ApiProperty({ example: 40000, description: 'Outstanding amount in PKR (integer)' })
+  outstanding!: number;
+}
+
+export class CustomerOpenDocumentsResponseDto {
+  @ApiProperty({ example: '9f4b6e2c-0a2d-4cc5-8c4d-1a4a88c81a88', format: 'uuid' })
+  customerId!: string;
+
+  @ApiProperty({ example: 'Big Corp' })
+  customerName!: string;
+
+  @ApiProperty({ example: 120000, description: 'Sum of outstanding sale documents in PKR (integer)' })
+  totalOutstanding!: number;
+
+  @ApiProperty({ example: 5000, description: 'Unapplied customer return credits in PKR (integer)' })
+  unappliedCredits!: number;
+
+  @ApiProperty({ example: 115000, description: 'Net outstanding after applying credits in PKR (integer)' })
+  netOutstanding!: number;
+
+  @ApiProperty({ type: [CustomerOpenDocumentDto] })
+  documents!: CustomerOpenDocumentDto[];
 }

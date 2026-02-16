@@ -14,7 +14,7 @@ import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { ApiErrorResponse } from '../common/swagger/api-error-response.dto';
-import { AuthResponseDto } from './dto/auth-response.dto';
+import { AuthResponseDto, LogoutResponseDto, RefreshTokenResponseDto } from './dto/auth-response.dto';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -46,7 +46,7 @@ export class AuthController {
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Exchange a refresh token for a new access token' })
-  @ApiOkResponse({ description: 'New access token issued', schema: { properties: { accessToken: { type: 'string' } } } })
+  @ApiOkResponse({ description: 'New access token issued', type: RefreshTokenResponseDto })
   @ApiUnauthorizedResponse({ description: 'Invalid or expired refresh token', type: ApiErrorResponse })
   async refresh(@Body() dto: RefreshTokenDto) {
     return this.authService.refresh(dto.refreshToken);
@@ -56,7 +56,7 @@ export class AuthController {
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Revoke a refresh token' })
-  @ApiOkResponse({ description: 'Token revoked' })
+  @ApiOkResponse({ description: 'Token revoked', type: LogoutResponseDto })
   async logout(@Body() dto: RefreshTokenDto) {
     await this.authService.logout(dto.refreshToken);
     return { message: 'Logged out' };

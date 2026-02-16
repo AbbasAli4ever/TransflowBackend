@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class PaymentAccountComputedDto {
   @ApiProperty({ example: 0, description: 'Derived current balance in PKR (integer)' })
@@ -10,15 +10,15 @@ export class PaymentAccountComputedDto {
   @ApiProperty({ example: 0, description: 'Derived total out amount in PKR (integer)' })
   totalOut!: number;
 
-  @ApiProperty({ example: null, nullable: true })
+  @ApiProperty({ type: String, example: null, nullable: true, format: 'date-time' })
   lastTransactionDate!: string | null;
 }
 
 export class PaymentAccountResponseDto {
-  @ApiProperty({ example: '9f4b6e2c-0a2d-4cc5-8c4d-1a4a88c81a88' })
+  @ApiProperty({ example: '9f4b6e2c-0a2d-4cc5-8c4d-1a4a88c81a88', format: 'uuid' })
   id!: string;
 
-  @ApiProperty({ example: '6c6f7f48-3d5b-4a3f-9b1d-9c0d73b0c3d2' })
+  @ApiProperty({ example: '6c6f7f48-3d5b-4a3f-9b1d-9c0d73b0c3d2', format: 'uuid' })
   tenantId!: string;
 
   @ApiProperty({ example: 'Main Cash' })
@@ -33,13 +33,13 @@ export class PaymentAccountResponseDto {
   @ApiProperty({ example: 'ACTIVE' })
   status!: string;
 
-  @ApiProperty({ example: '2026-02-11T10:00:00.000Z' })
+  @ApiProperty({ example: '2026-02-11T10:00:00.000Z', format: 'date-time' })
   createdAt!: string;
 
-  @ApiProperty({ example: '2026-02-11T10:00:00.000Z' })
+  @ApiProperty({ example: '2026-02-11T10:00:00.000Z', format: 'date-time' })
   updatedAt!: string;
 
-  @ApiProperty({ example: 'd2f2c7b5-0c2a-4aa2-9c60-6b3f94b7e8d4', required: false })
+  @ApiPropertyOptional({ type: String, example: 'd2f2c7b5-0c2a-4aa2-9c60-6b3f94b7e8d4', format: 'uuid', nullable: true })
   createdBy?: string | null;
 
   @ApiProperty({ type: PaymentAccountComputedDto })
@@ -69,7 +69,7 @@ export class PaymentAccountListResponseDto {
 }
 
 export class PaymentAccountBalanceResponseDto {
-  @ApiProperty({ example: '9f4b6e2c-0a2d-4cc5-8c4d-1a4a88c81a88' })
+  @ApiProperty({ example: '9f4b6e2c-0a2d-4cc5-8c4d-1a4a88c81a88', format: 'uuid' })
   paymentAccountId!: string;
 
   @ApiProperty({ example: 25000, description: 'Opening balance in PKR (integer)' })

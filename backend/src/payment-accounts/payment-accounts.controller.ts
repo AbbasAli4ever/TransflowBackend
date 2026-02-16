@@ -3,6 +3,7 @@ import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiConflictResponse,
+  ApiCreatedResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -33,7 +34,7 @@ export class PaymentAccountsController {
   @Post()
   @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Create payment account' })
-  @ApiOkResponse({ description: 'Payment account created', type: PaymentAccountResponseDto })
+  @ApiCreatedResponse({ description: 'Payment account created', type: PaymentAccountResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
   @ApiConflictResponse({ description: 'Payment account name already exists', type: ApiErrorResponse })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })

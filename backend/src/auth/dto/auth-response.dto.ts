@@ -44,3 +44,13 @@ export class AuthResponseDto {
   @ApiProperty({ type: AuthUserDto })
   user!: AuthUserDto;
 }
+
+export class RefreshTokenResponseDto {
+  @ApiProperty({ example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...' })
+  accessToken!: string;
+}
+
+export class LogoutResponseDto {
+  @ApiProperty({ example: 'Logged out' })
+  message!: string;
+}

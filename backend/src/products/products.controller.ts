@@ -3,6 +3,7 @@ import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiConflictResponse,
+  ApiCreatedResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -33,7 +34,7 @@ export class ProductsController {
   @Post()
   @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Create product' })
-  @ApiOkResponse({ description: 'Product created', type: ProductResponseDto })
+  @ApiCreatedResponse({ description: 'Product created', type: ProductResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
   @ApiConflictResponse({ description: 'SKU already exists for this tenant', type: ApiErrorResponse })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })

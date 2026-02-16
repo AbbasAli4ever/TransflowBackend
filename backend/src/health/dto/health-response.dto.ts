@@ -1,13 +1,13 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class HealthComponentStatusDto {
   @ApiProperty({ example: 'up' })
   status!: string;
 
-  @ApiProperty({ example: '12ms', required: false })
+  @ApiPropertyOptional({ type: String, example: '12ms' })
   responseTime?: string;
 
-  @ApiProperty({ example: 'Connection timeout', required: false })
+  @ApiPropertyOptional({ type: String, example: 'Connection timeout' })
   message?: string;
 }
 

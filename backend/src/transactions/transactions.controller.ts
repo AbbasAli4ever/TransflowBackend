@@ -12,6 +12,7 @@ import {
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
+  ApiCreatedResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -21,6 +22,7 @@ import {
   ApiUnauthorizedResponse,
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
+import { TransactionStatus, TransactionType } from '@prisma/client';
 import { TransactionsService } from './transactions.service';
 import { CreatePurchaseDraftDto } from './dto/create-purchase-draft.dto';
 import { CreateSaleDraftDto } from './dto/create-sale-draft.dto';
@@ -35,6 +37,7 @@ import { CreateInternalTransferDraftDto } from './dto/create-internal-transfer-d
 import { CreateAdjustmentDraftDto } from './dto/create-adjustment-draft.dto';
 import { ApiErrorResponse } from '../common/swagger/api-error-response.dto';
 import {
+  AllocationListResponseDto,
   TransactionListResponseDto,
   TransactionResponseDto,
 } from './dto/transaction-response.dto';
@@ -47,7 +50,7 @@ export class TransactionsController {
 
   @Post('purchases/draft')
   @ApiOperation({ summary: 'Create purchase draft' })
-  @ApiOkResponse({ description: 'Purchase draft created', type: TransactionResponseDto })
+  @ApiCreatedResponse({ description: 'Purchase draft created', type: TransactionResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
   @ApiNotFoundResponse({ description: 'Supplier or product not found', type: ApiErrorResponse })
   @ApiUnprocessableEntityResponse({
@@ -61,7 +64,7 @@ export class TransactionsController {
 
   @Post('sales/draft')
   @ApiOperation({ summary: 'Create sale draft' })
-  @ApiOkResponse({ description: 'Sale draft created', type: TransactionResponseDto })
+  @ApiCreatedResponse({ description: 'Sale draft created', type: TransactionResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
   @ApiNotFoundResponse({ description: 'Customer or product not found', type: ApiErrorResponse })
   @ApiUnprocessableEntityResponse({
@@ -75,7 +78,7 @@ export class TransactionsController {
 
   @Post('supplier-payments/draft')
   @ApiOperation({ summary: 'Create supplier payment draft' })
-  @ApiOkResponse({ description: 'Supplier payment draft created', type: TransactionResponseDto })
+  @ApiCreatedResponse({ description: 'Supplier payment draft created', type: TransactionResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
   @ApiNotFoundResponse({ description: 'Supplier or payment account not found', type: ApiErrorResponse })
   @ApiUnprocessableEntityResponse({ description: 'Supplier or payment account inactive', type: ApiErrorResponse })
@@ -86,7 +89,7 @@ export class TransactionsController {
 
   @Post('customer-payments/draft')
   @ApiOperation({ summary: 'Create customer payment draft' })
-  @ApiOkResponse({ description: 'Customer payment draft created', type: TransactionResponseDto })
+  @ApiCreatedResponse({ description: 'Customer payment draft created', type: TransactionResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
   @ApiNotFoundResponse({ description: 'Customer or payment account not found', type: ApiErrorResponse })
   @ApiUnprocessableEntityResponse({ description: 'Customer or payment account inactive', type: ApiErrorResponse })
@@ -97,7 +100,7 @@ export class TransactionsController {
 
   @Post('supplier-returns/draft')
   @ApiOperation({ summary: 'Create supplier return draft' })
-  @ApiOkResponse({ description: 'Supplier return draft created', type: TransactionResponseDto })
+  @ApiCreatedResponse({ description: 'Supplier return draft created', type: TransactionResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
   @ApiNotFoundResponse({ description: 'Supplier or source line not found', type: ApiErrorResponse })
   @ApiUnprocessableEntityResponse({ description: 'Over-return or invalid source line', type: ApiErrorResponse })
@@ -108,7 +111,7 @@ export class TransactionsController {
 
   @Post('customer-returns/draft')
   @ApiOperation({ summary: 'Create customer return draft' })
-  @ApiOkResponse({ description: 'Customer return draft created', type: TransactionResponseDto })
+  @ApiCreatedResponse({ description: 'Customer return draft created', type: TransactionResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
   @ApiNotFoundResponse({ description: 'Customer or source line not found', type: ApiErrorResponse })
   @ApiUnprocessableEntityResponse({ description: 'Over-return or invalid source line', type: ApiErrorResponse })
@@ -119,7 +122,7 @@ export class TransactionsController {
 
   @Post('internal-transfers/draft')
   @ApiOperation({ summary: 'Create internal transfer draft' })
-  @ApiOkResponse({ description: 'Internal transfer draft created', type: TransactionResponseDto })
+  @ApiCreatedResponse({ description: 'Internal transfer draft created', type: TransactionResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed or same account', type: ApiErrorResponse })
   @ApiNotFoundResponse({ description: 'Payment account not found', type: ApiErrorResponse })
   @ApiUnprocessableEntityResponse({ description: 'Payment account inactive', type: ApiErrorResponse })
@@ -130,7 +133,7 @@ export class TransactionsController {
 
   @Post('adjustments/draft')
   @ApiOperation({ summary: 'Create adjustment draft (OWNER/ADMIN only)' })
-  @ApiOkResponse({ description: 'Adjustment draft created', type: TransactionResponseDto })
+  @ApiCreatedResponse({ description: 'Adjustment draft created', type: TransactionResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
   @ApiNotFoundResponse({ description: 'Product not found', type: ApiErrorResponse })
   @ApiUnprocessableEntityResponse({ description: 'Product inactive', type: ApiErrorResponse })
@@ -141,7 +144,7 @@ export class TransactionsController {
 
   @Get('allocations')
   @ApiOperation({ summary: 'List allocations' })
-  @ApiOkResponse({ description: 'Allocation list' })
+  @ApiOkResponse({ description: 'Allocation list', type: AllocationListResponseDto })
   @ApiQuery({ name: 'supplierId', required: false, type: String })
   @ApiQuery({ name: 'customerId', required: false, type: String })
   @ApiQuery({ name: 'purchaseId', required: false, type: String })
@@ -175,8 +178,8 @@ export class TransactionsController {
   @ApiOkResponse({ description: 'Transaction list', type: TransactionListResponseDto })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
-  @ApiQuery({ name: 'type', required: false, enum: ['PURCHASE', 'SALE', 'RETURN', 'TRANSFER'] })
-  @ApiQuery({ name: 'status', required: false, enum: ['DRAFT', 'POSTED', 'VOID'] })
+  @ApiQuery({ name: 'type', required: false, enum: TransactionType })
+  @ApiQuery({ name: 'status', required: false, enum: TransactionStatus })
   @ApiQuery({ name: 'dateFrom', required: false, type: String })
   @ApiQuery({ name: 'dateTo', required: false, type: String })
   @ApiQuery({ name: 'supplierId', required: false, type: String })

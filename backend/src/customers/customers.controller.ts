@@ -3,6 +3,7 @@ import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiConflictResponse,
+  ApiCreatedResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -21,6 +22,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import {
   CustomerBalanceResponseDto,
   CustomerListResponseDto,
+  CustomerOpenDocumentsResponseDto,
   CustomerResponseDto,
 } from './dto/customer-response.dto';
 
@@ -33,7 +35,7 @@ export class CustomersController {
   @Post()
   @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Create customer' })
-  @ApiOkResponse({ description: 'Customer created', type: CustomerResponseDto })
+  @ApiCreatedResponse({ description: 'Customer created', type: CustomerResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
   @ApiConflictResponse({ description: 'Customer name already exists', type: ApiErrorResponse })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
@@ -105,7 +107,7 @@ export class CustomersController {
   @Get(':id/open-documents')
   @ApiOperation({ summary: 'Get outstanding sale documents for a customer' })
   @ApiParam({ name: 'id', description: 'Customer UUID' })
-  @ApiOkResponse({ description: 'Open documents list' })
+  @ApiOkResponse({ description: 'Open documents list', type: CustomerOpenDocumentsResponseDto })
   @ApiNotFoundResponse({ description: 'Customer not found', type: ApiErrorResponse })
   @ApiBadRequestResponse({ description: 'Invalid UUID', type: ApiErrorResponse })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })

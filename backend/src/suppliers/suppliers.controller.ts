@@ -3,6 +3,7 @@ import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiConflictResponse,
+  ApiCreatedResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -21,6 +22,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import {
   SupplierBalanceResponseDto,
   SupplierListResponseDto,
+  SupplierOpenDocumentsResponseDto,
   SupplierResponseDto,
 } from './dto/supplier-response.dto';
 
@@ -33,7 +35,7 @@ export class SuppliersController {
   @Post()
   @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Create supplier' })
-  @ApiOkResponse({ description: 'Supplier created', type: SupplierResponseDto })
+  @ApiCreatedResponse({ description: 'Supplier created', type: SupplierResponseDto })
   @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
   @ApiConflictResponse({ description: 'Supplier name already exists', type: ApiErrorResponse })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
@@ -105,7 +107,7 @@ export class SuppliersController {
   @Get(':id/open-documents')
   @ApiOperation({ summary: 'Get outstanding purchase documents for a supplier' })
   @ApiParam({ name: 'id', description: 'Supplier UUID' })
-  @ApiOkResponse({ description: 'Open documents list' })
+  @ApiOkResponse({ description: 'Open documents list', type: SupplierOpenDocumentsResponseDto })
   @ApiNotFoundResponse({ description: 'Supplier not found', type: ApiErrorResponse })
   @ApiBadRequestResponse({ description: 'Invalid UUID', type: ApiErrorResponse })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })

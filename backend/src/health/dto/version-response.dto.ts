@@ -10,9 +10,9 @@ export class VersionResponseDto {
   @ApiProperty({ example: 'v20.10.0' })
   nodeVersion!: string;
 
-  @ApiPropertyOptional({ example: '2026-02-11T10:00:00.000Z' })
+  @ApiPropertyOptional({ type: String, example: '2026-02-11T10:00:00.000Z', nullable: true, format: 'date-time' })
   buildDate?: string | null;
 
-  @ApiPropertyOptional({ example: 'a1b2c3d4' })
+  @ApiPropertyOptional({ type: String, example: 'a1b2c3d4', nullable: true })
   gitCommit?: string | null;
 }
