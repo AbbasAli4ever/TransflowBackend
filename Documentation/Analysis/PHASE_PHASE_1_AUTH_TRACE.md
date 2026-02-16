@@ -8,162 +8,146 @@ Phase 1 — Auth
 --------------------------------------------
 
 Route Entry:
-- Global prefix: `api/v1` from `src/main.ts`
-- Resolved route: `POST /api/v1/auth/register`
-
+- `src/main.ts`: global prefix `api/v1`, JSON body limit `1mb`, Helmet, global rate limit.
+- `src/app.module.ts`: `RequestContextMiddleware` and `TenantContextMiddleware` run for all routes; global guards are registered.
+- `src/common/guards/jwt-auth.guard.ts` + `src/common/guards/tenant-scope.guard.ts`: bypassed because endpoint is `@Public()`.
 Controller:
-- `src/auth/auth.controller.ts`
-- `@Public()` endpoint calls `AuthService.register(dto)`
-
+- `src/auth/auth.controller.ts` → `register(@Body() dto: RegisterDto)`.
 Service:
-- `src/auth/auth.service.ts#register`
-
+- `src/auth/auth.service.ts` → `register(dto)`.
 Repository:
-- No dedicated repository layer
-- Direct Prisma calls via `PrismaService`
-
+- Direct Prisma access (no repository abstraction): `tx.tenant.create`, `tx.user.create`, `refreshToken.create`.
 DTO/Schema:
-- Request DTO: `src/auth/dto/register.dto.ts`
-- Validation pipe: `src/common/pipes/validation.pipe.ts`
-- DB schema: `prisma/schema.prisma` (`Tenant`, `User`, `@@unique([email])`)
+- DTO: `src/auth/dto/register.dto.ts`.
+- Tables: `tenants`, `users`, `refresh_tokens` (`prisma/schema.prisma`).
 
 Execution Trace:
-1. Request enters Nest app with global middleware chain (`RequestContextMiddleware`, `TenantContextMiddleware`) from `src/app.module.ts`.
-2. `RequestContextMiddleware` sets/propagates `x-request-id` using async local storage.
-3. `TenantContextMiddleware` optionally parses `Authorization` bearer token and sets context if valid; token failures are swallowed.
-4. Global guards run in order: `JwtAuthGuard` then `TenantScopeGuard`.
-5. Because endpoint is `@Public()`, both guards short-circuit and allow request without JWT/tenant.
-6. Global `ValidationPipe` applies `RegisterDto` constraints with `whitelist`, `forbidNonWhitelisted`, transform enabled.
-7. `AuthController.register()` forwards sanitized DTO to `AuthService.register()`.
-8. Service performs `user.findFirst` with case-insensitive email condition.
-9. If existing user found, throws `ConflictException('Email already exists')`.
-10. Service hashes password with bcrypt (`saltRounds=12`).
-11. Service opens Prisma transaction and creates `tenant`, then creates `user` linked to that tenant.
-12. Service generates access + refresh JWTs and returns tokens + user summary.
-13. Interceptors run; exceptions are normalized by `HttpExceptionFilter` if thrown.
+1. Request enters Express/Nest pipeline; request context is initialized and request id header is set.
+2. Validation pipe applies `RegisterDto` rules (`tenantName`, `fullName`, `email`, `password`) with `whitelist` + `forbidNonWhitelisted`.
+3. Controller forwards DTO to `AuthService.register`.
+4. Service hashes password with bcrypt (12 rounds).
+5. Service runs Prisma transaction callback: create tenant first, create owner user second with normalized email and role `OWNER`.
+6. Unique constraint conflict (`P2002`) is mapped to HTTP 409 `Email already exists`.
+7. After DB transaction commits, service generates JWT access/refresh tokens, hashes refresh token with SHA-256, stores token record, returns tokens + user summary.
 
 Business Rules Observed:
-- Email uniqueness is checked before creation.
-- Email is normalized to lowercase in DTO and service.
-- Tenant and owner user are created atomically in one DB transaction.
-- New user role is fixed to `OWNER`.
-- Password is stored as bcrypt hash (not plaintext).
+- Owner user is created atomically with new tenant in one DB transaction.
+- New user role is forced to `OWNER`.
+- Email is normalized to lowercase before persistence.
+- Password policy requires strong password via `IsStrongPassword`.
+- Duplicate email is blocked by unique DB constraint.
 
 Missing Rules:
-- No explicit handling for DB unique constraint race (`P2002`) on concurrent same-email registrations.
-- No explicit anti-automation rule (captcha/challenge) for open registration.
-- No policy gate for tenant creation abuse (domain allowlist, invitation, or registration controls).
+- No idempotency-key enforcement for registration despite API spec saying all write endpoints require it.
+- No anti-automation controls specific to registration (captcha/challenge/risk scoring).
+- No explicit transactional guarantee that token persistence succeeds together with tenant/user creation.
+- No max password length bound.
 
 Security Risks:
-- TOCTOU duplicate-email check: app-level pre-check + DB write can race; unhandled DB unique error likely returns 500 instead of controlled 409.
-- Global rate limit is coarse (IP-wide). No per-email/per-account registration abuse controls.
-- No explicit audit log event for new-tenant registration (security forensics gap).
+- Email enumeration: API returns explicit `Email already exists` on registration conflict.
+- DTO `@Transform(({ value }) => value?.trim())` pattern can throw on non-string payloads (`trim` not a function), risking 500 instead of clean 400.
+- Coarse global rate limit is present, but no endpoint/account-aware registration abuse controls.
 
 Financial Risks:
-- Weak registration abuse controls can allow mass tenant creation, increasing attack surface for later financial operations.
-- If duplicate-email race returns 500 unpredictably, operational handling of identity onboarding is inconsistent.
+- Registration abuse can create high volume of tenants/users, increasing attack surface on financial data.
+- Enumeration can help targeted credential attacks against known emails in a finance system.
 
 Edge Case Failures:
-- Concurrent requests for same email can produce internal error path instead of deterministic business error.
-- If DB contains legacy mixed-case duplicate emails (outside API path), `findFirst` behavior can become ambiguous.
+- Non-string `tenantName`/`fullName`/`email` can crash transform path.
+- If refresh-token persistence fails after tenant/user commit, request fails but account remains created (partial post-commit failure path).
 
 Concurrency Risks:
-- High: registration race window between `findFirst` and `user.create`.
-- Transaction ensures tenant/user atomicity, but does not eliminate conflict race with other transactions.
+- Same-email concurrent registration is mostly safe due DB unique constraint + transaction rollback semantics.
+- No explicit stress-tested handling for high-concurrency signup bursts.
 
 Test Coverage:
-- Present: happy path, default tenant fields, duplicate email (normal + case-insensitive), DTO validation cases, basic atomicity checks in `test/integration/auth.integration.spec.ts`.
-- Present: unit coverage for register logic in `test/unit/auth-service.spec.ts` and `src/auth/auth.service.spec.ts`.
-- Missing: concurrent registration race test, explicit DB unique-constraint error mapping test, registration abuse/throttling tests.
+- Integration: strong happy/error coverage for register (`test/integration/auth.integration.spec.ts`, register block).
+- Unit: register duplicate + trimming + success paths covered in both `src/auth/auth.service.spec.ts` and `test/unit/auth-service.spec.ts`.
+- Missing tests: malformed non-string transform behavior, refresh-token persistence failure after successful user creation, registration concurrency flood tests, idempotency behavior.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Catch Prisma `P2002` in `register()` and map to `ConflictException` with stable message.
-- Enforce case-insensitive uniqueness at DB level (e.g., `citext` or unique index on `lower(email)`).
-- Add concurrency integration test: parallel register requests on same email must yield one success, one 409.
-- Add registration abuse controls (stricter endpoint limiter and/or challenge mechanism).
+- Harden DTO transforms to type-safe form, e.g. guard with `typeof value === 'string'` before trimming.
+- Return generic registration failure messaging (or delayed verification flow) to reduce email enumeration.
+- Make register fully atomic with token persistence (single transaction or compensating cleanup on post-commit failure).
+- Add registration abuse controls (per-IP + per-email throttling/challenge).
+- Align implementation/contracts on idempotency expectations for write endpoints.
 
 --------------------------------------------
 ## API: POST /api/v1/auth/login
 --------------------------------------------
 
 Route Entry:
-- Global prefix: `api/v1` from `src/main.ts`
-- Resolved route: `POST /api/v1/auth/login`
-
+- `src/main.ts`: global prefix, JSON limit, Helmet, global rate limit.
+- `src/app.module.ts`: request/tenant middleware + global guards/interceptors/filter registered.
+- `src/common/guards/jwt-auth.guard.ts` + `src/common/guards/tenant-scope.guard.ts`: bypassed due `@Public()`.
 Controller:
-- `src/auth/auth.controller.ts`
-- `@Public()` endpoint calls `AuthService.login(dto)`
-
+- `src/auth/auth.controller.ts` → `login(@Body() dto: LoginDto)`.
 Service:
-- `src/auth/auth.service.ts#login`
-
+- `src/auth/auth.service.ts` → `login(dto)`.
 Repository:
-- No dedicated repository layer
-- Direct Prisma calls via `PrismaService`
-
+- Direct Prisma access: `user.findFirst(include tenant)`, `$transaction([user.update, refreshToken.create])`.
 DTO/Schema:
-- Request DTO: `src/auth/dto/login.dto.ts`
-- Validation pipe: `src/common/pipes/validation.pipe.ts`
-- DB schema: `prisma/schema.prisma` (`User`, `Tenant`)
+- DTO: `src/auth/dto/login.dto.ts`.
+- Tables: `users`, `tenants`, `refresh_tokens`.
 
 Execution Trace:
-1. Request enters middleware chain (`RequestContextMiddleware`, `TenantContextMiddleware`).
-2. Request ID is set and stored in async context.
-3. Optional bearer token is parsed by tenant middleware; invalid token is ignored.
-4. Global guards evaluate endpoint metadata; `@Public()` bypasses JWT + tenant guards.
-5. Global validation transforms and validates `LoginDto` (`email` normalized to lowercase).
-6. `AuthController.login()` forwards DTO to `AuthService.login()`.
-7. Service performs `user.findFirst` by case-insensitive email and includes related `tenant`.
-8. If no user: throws `UnauthorizedException('Invalid credentials')`.
-9. If user status not ACTIVE: throws `ForbiddenException('Account inactive')`.
-10. If tenant status not ACTIVE: throws `ForbiddenException('Tenant inactive')`.
-11. Password is verified with bcrypt compare.
-12. If invalid password: throws `UnauthorizedException('Invalid credentials')`.
-13. On success, service updates `lastLoginAt` timestamp.
-14. Service generates access + refresh tokens and returns token payload plus user/tenant summary.
-15. Errors are normalized by `HttpExceptionFilter`; success response is passthrough.
+1. Request enters middleware chain; request context and optional tenant context are prepared.
+2. Validation pipe applies `LoginDto` rules (`email`, `password`) and strips/blocks unknown fields.
+3. Controller calls `AuthService.login`.
+4. Service fetches user by case-insensitive email (`findFirst`, includes tenant).
+5. Service rejects if user missing, user inactive, or tenant inactive (all mapped to generic 401 message).
+6. Service compares password using bcrypt.
+7. Service generates access + refresh tokens.
+8. Service stores side effects in Prisma transaction array: update `lastLoginAt`, insert hashed refresh token row.
+9. Service returns tokens + user profile + tenant summary.
 
 Business Rules Observed:
-- Authentication is email+password based.
-- User and tenant must both be ACTIVE.
-- Last successful login timestamp is persisted.
-- Tokens include `userId`, `tenantId`, `email`, `role` claims.
+- Authentication failure returns generic message (`Authentication failed`) to reduce direct user enumeration.
+- Both user and tenant must be `ACTIVE`.
+- Email lookup is case-insensitive.
+- Successful login updates `lastLoginAt` and creates a refresh token record.
 
 Missing Rules:
 - No account lockout/backoff after repeated failed logins.
-- No MFA/step-up requirement for sensitive financial tenancy.
-- No refresh-token persistence/rotation/revocation tracking in DB.
+- No MFA or step-up authentication path for financial operations.
+- No explicit cap/rotation policy on active refresh tokens per user/session.
+- No guarantee at DB level of case-insensitive email uniqueness while login query is case-insensitive.
 
 Security Risks:
-- User enumeration: different errors for invalid credentials vs inactive account/tenant reveal account existence/state.
-- Brute-force resistance is weak: only generic global rate-limit middleware, no credential stuffing protections per principal.
-- Refresh tokens are stateless and not revocable server-side in current auth flow.
+- DTO transform for email uses `value?.trim().toLowerCase()` and can throw on non-string values.
+- Potential ambiguous authentication target if mixed-case duplicate emails ever exist (DB unique is case-sensitive, login is case-insensitive + `findFirst`).
+- No endpoint-specific brute-force mitigation beyond global rate limit.
+- Debug logging includes attempted email/user identifiers on auth failures.
 
 Financial Risks:
-- Compromised credentials enable direct access to tenant financial endpoints; lack of lockout/MFA increases probability of account takeover.
-- Account enumeration can accelerate targeted attacks against known financial operators.
+- Credential compromise yields direct tenant-level access to accounting data and operations.
+- Lack of stronger anti-bruteforce controls increases risk of unauthorized access in a finance backend.
 
 Edge Case Failures:
-- `LoginDto.password` is not trimmed; whitespace-only strings pass DTO non-empty check and reach bcrypt compare.
-- `lastLoginAt` update occurs before token return; if token generation fails, login side-effect still occurs.
+- Non-string email payload can produce transform exception path.
+- Whitespace-only password passes `IsNotEmpty()` and reaches bcrypt compare.
+- Repeated successful logins can grow refresh token table without lifecycle control.
 
 Concurrency Risks:
-- Repeated concurrent login attempts update `lastLoginAt` non-deterministically (latest writer wins) but not integrity-critical.
-- No session concurrency controls (no token jti/session table), so parallel stolen-token usage cannot be centrally revoked.
+- Concurrent logins for same user are allowed and create multiple active refresh tokens; no session concurrency guard.
+- `lastLoginAt` is last-write-wins under concurrency (acceptable but not audit-precise to request granularity).
 
 Test Coverage:
-- Present: valid login, invalid email/password, case-insensitive email login, inactive user, inactive tenant, `lastLoginAt` update in `test/integration/auth.integration.spec.ts`.
-- Present: service-level unit tests for login branches and token generation in `test/unit/auth-service.spec.ts`.
-- Missing: enumeration-safe error behavior tests, lockout/backoff tests, refresh-token revocation/rotation tests, stress/concurrency auth tests.
+- Integration: login success, invalid credentials, case-insensitive email, inactive user, inactive tenant, and `lastLoginAt` update covered.
+- Unit: success/failure/status checks and token generation covered in both auth service unit suites.
+- Missing tests: brute-force/rate-limit efficacy for login, malformed non-string transform behavior, concurrent login/session explosion behavior, case-insensitive duplicate-email ambiguity scenario.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Normalize external error response for auth failures (avoid exposing inactive status to unauthenticated clients).
-- Add per-account/IP adaptive throttling and lockout/backoff controls.
-- Introduce refresh-token store with rotation + revocation semantics.
-- Add tests for brute-force protection, enumeration resistance, and token lifecycle controls.
+- Replace unsafe DTO transforms with type-checked sanitizers.
+- Enforce case-insensitive uniqueness for user email at DB level (`lower(email)` unique index or CITEXT).
+- Add login hardening: per-account throttling, lockout/backoff, optional MFA hooks.
+- Introduce refresh-token lifecycle policy (max active tokens per user/device + cleanup/rotation strategy).
+- Reduce sensitive debug logging on auth failures in production profiles.
+
+--------------------------------------------

@@ -4,38 +4,37 @@ Title:
 Phase 1 — Auth
 
 Module Purpose:
-- Provide initial identity boundary for the finance system: tenant bootstrap (`register`) and credential authentication (`login`) with JWT issuance.
+- Provide tenant bootstrap (`register`) and credential-based authentication (`login`) that issue JWT access/refresh tokens for the multi-tenant finance backend.
 
 Top Risks:
-1. Registration race condition handling is incomplete: duplicate email conflicts can surface as 500 under concurrency if DB uniqueness is hit after pre-check.
-2. Login endpoint leaks account state (`inactive account` / `inactive tenant`) versus invalid credentials, enabling user/account enumeration.
-3. Auth hardening is insufficient for financial threat models: no account lockout/backoff and no server-side refresh-token revocation/rotation state.
+1. Unsafe DTO transform usage (`value?.trim()` patterns) can throw runtime errors for non-string inputs and produce 500-class behavior on auth endpoints.
+2. Email uniqueness is case-sensitive at DB level while login query is case-insensitive (`findFirst`), creating ambiguity risk if mixed-case duplicates are introduced outside normal API flow.
+3. Authentication hardening is limited (no account lockout/backoff/MFA path); global rate limiting alone is weak for finance-grade credential defense.
 
 Common Failure Patterns:
-- Application-level pre-checks used where DB-enforced outcomes must also be explicitly mapped.
-- Security controls rely on coarse global middleware instead of endpoint-aware auth protections.
-- Strong unit/integration happy-path coverage exists, but adversarial and concurrency paths are under-tested.
+- Business-critical validation and normalization rules depend on application code instead of DB constraints.
+- Public auth endpoints bypass guards by design, but compensating controls are not strong enough.
+- Post-commit side effects (refresh-token persistence) are not fully atomic with registration lifecycle.
 
 Financial Integrity Risks:
-- Account takeover risk is elevated without MFA/lockout/token revocation, exposing tenant financial data and transaction authority.
-- Identity onboarding instability under race conditions can cause inconsistent user provisioning outcomes and operational support incidents.
+- Any auth compromise directly exposes tenant financial operations and historical accounting data.
+- Registration/login abuse can be used to stage credential stuffing and tenant-targeted attacks.
 
 Architectural Weaknesses:
-- No dedicated auth repository/service boundary for persistence error normalization.
-- Email uniqueness depends on application normalization more than robust DB-level case-insensitive constraint design.
-- Token model is effectively stateless long-lived bearer trust without server-side session lifecycle control.
+- No repository boundary; controller/service directly bind to Prisma operations.
+- Contract drift exists between documented API envelope (`data`, snake_case fields) and implemented auth response shape (top-level camelCase).
+- Spec states all write endpoints require `Idempotency-Key`, but auth write endpoints do not enforce this.
 
 Missing Tests:
-- Parallel register requests on identical email asserting deterministic `{201, 409}` outcomes.
-- Explicit Prisma unique-constraint mapping test (`P2002` -> 409) for registration.
-- Login enumeration resistance test (uniform external auth failure response).
-- Brute-force/lockout/adaptive throttling tests.
-- Refresh token rotation/revocation tests.
+- Non-string transform crash behavior for register/login DTOs.
+- High-concurrency register/login stress tests.
+- Endpoint-specific anti-bruteforce/rate-limit behavior for auth endpoints.
+- Partial-failure path where register DB transaction succeeds but refresh-token persistence fails.
+- Case-insensitive duplicate-email ambiguity scenario.
 
 Frontend Impact:
-- Current differentiated login errors may be used by UI but should be collapsed for security; frontend error messaging will need adjustment.
-- If registration conflict handling is fixed from intermittent 500 to consistent 409, frontend retry and UX flows become deterministic.
-- Any future token-rotation rollout will require frontend refresh-flow updates.
+- Frontend contracts based on docs can break due response shape mismatch (documented `data.access_token` vs implemented `accessToken` at root).
+- Registration duplicate-email response reveals account existence, which may affect UX and security messaging flows.
 
 Phase Verdict:
 ⚠ Needs fixes

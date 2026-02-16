@@ -8,346 +8,409 @@ Phase 5 — Payment Accounts
 --------------------------------------------
 
 Route Entry:
-`main.ts` global prefix `/api/v1` + global `ValidationPipe`; `RequestContextMiddleware` sets requestId; `TenantContextMiddleware` parses bearer JWT into async context (best-effort); `JwtAuthGuard` enforces JWT auth; `TenantScopeGuard` requires `request.user.tenantId` and sets tenant/user context.
+- Global prefix: `/api/v1` (`src/main.ts`)
+- Route: `GET /payment-accounts` (`src/payment-accounts/payment-accounts.controller.ts`, `findAll`)
+- Middleware chain: `RequestContextMiddleware` -> `TenantContextMiddleware` (`src/app.module.ts`)
+- Guard chain: `JwtAuthGuard` -> `TenantScopeGuard` -> `RolesGuard` (`src/app.module.ts`)
+
 Controller:
-`PaymentAccountsController.findAll(@Query() query)`
+- `PaymentAccountsController.findAll(@Query() query: ListPaymentAccountsQueryDto)`
+
 Service:
-`PaymentAccountsService.findAll(query)`
+- `PaymentAccountsService.findAll(query)`
+
 Repository:
-`PrismaService.paymentAccount.findMany()` + `PrismaService.paymentAccount.count()`
+- Prisma direct calls via `PrismaService`:
+  - `paymentAccount.findMany`
+  - `paymentAccount.count`
+
 DTO/Schema:
-`ListPaymentAccountsQueryDto` (inherits `PaginationQueryDto`): `page>=1`, `limit<=100`, optional `type` enum, optional `status` enum default `ACTIVE`; `payment_accounts` table with tenant scoping and unique `(tenant_id,name)`.
+- Query DTO: `ListPaymentAccountsQueryDto` + `PaginationQueryDto`
+- DB model: `PaymentAccount` (`prisma/schema.prisma`)
 
 Execution Trace:
-1. Request query is validated/transformed by global ValidationPipe (whitelist+forbid unknown query fields).
-2. Service pulls `tenantId` from async request context; missing tenant => `401 UnauthorizedException`.
-3. Service builds `where={tenantId}` plus optional `status`/`type`, runs paginated `findMany` ordered by `name asc` and total `count`.
-4. Service maps each row through `withComputed()` and returns `paginateResponse({data,meta})`.
+1. Request enters global middleware; request context and tenant/user context are populated from JWT.
+2. `JwtAuthGuard` enforces authentication; `TenantScopeGuard` enforces tenant presence; `RolesGuard` allows because endpoint has no `@Roles` metadata.
+3. Validation pipe transforms/validates query (`page`, `limit`, optional `type`, optional `status`), rejects unknown query fields.
+4. Controller forwards query to service.
+5. Service resolves `tenantId` from async context; if missing, throws `UnauthorizedException`.
+6. Service builds `where = { tenantId }`; adds `status` unless `ALL`; adds `type` if provided.
+7. Service executes `findMany` and `count` in parallel; orders by `name ASC`; paginates by skip/take.
+8. Service returns `paginateResponse({ data, meta })`.
 
 Business Rules Observed:
-- Tenant isolation at service query layer (`where: { tenantId, ... }`).
-- Default behavior excludes inactive records (`status` defaults to `ACTIVE`).
-- Filter options: `type`, `status`, pagination.
+- Tenant isolation is enforced at query level (`where: { tenantId }`).
+- Default status filter is `ACTIVE` unless explicitly `ALL`.
+- Type filter restricted to `CASH|BANK|WALLET|CARD`.
 
 Missing Rules:
-- No search by account name despite other master-data modules using search patterns.
-- `_computed` fields are hardcoded placeholders, not derived values.
-- No role-based authorization (any authenticated role can list accounts).
+- No search support despite phase docs discussing searchable master lists.
+- API docs/DTO advertise `_computed`, but list response returns raw rows only.
 
 Security Risks:
-- Authorization is authentication-only; no RBAC restriction for sensitive finance master data.
+- No endpoint-specific tests for unauthorized access (401) on this read endpoint.
 
 Financial Risks:
-- Response exposes `_computed.currentBalance/totalIn/totalOut/lastTransactionDate` as fixed zeros/null, which can mislead consumers into treating non-zero accounts as zero.
+- Consumers may assume `_computed.currentBalance` exists (per response DTO/docs) and make wrong financial decisions when field is absent.
 
 Edge Case Failures:
-- No test for `status=INACTIVE` or `status=ALL` combined with pagination limits.
-- No explicit normalization (`trim`, case-folding) of names shown in list (display consistency risk).
+- No tests for invalid `status`/`type` query combinations beyond happy path.
+- No tests for page/limit boundaries on this endpoint.
 
 Concurrency Risks:
-- Low for read path; no transactional consistency snapshot. Concurrent postings can make list stale between `findMany` and `count`.
+- Low for read path; no write side effects.
 
 Test Coverage:
-- Covered: `test/integration/payment-accounts.integration.spec.ts` (pagination, type filter, tenant isolation).
-- Unit behavior covered in `src/payment-accounts/payment-accounts.service.spec.ts`.
-- Missing: explicit status-filter tests, pagination boundary tests (`page`, `limit`).
+- Integration: pagination success, type filter, tenant isolation (`test/integration/payment-accounts.integration.spec.ts`).
+- Missing: auth failure, validation boundary tests, response-contract tests for `_computed`.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Replace placeholder `_computed` values with true derived metrics or remove `_computed` from this endpoint.
-- Add explicit tests for `status=ACTIVE/INACTIVE/ALL` and pagination edge boundaries.
-- Add RBAC policy for who can enumerate finance accounts.
+- Align runtime response with documented contract: either return `_computed` or change DTO/spec.
+- Add integration tests for unauthorized access and query boundary validation.
 
 --------------------------------------------
 ## API: GET /api/v1/payment-accounts/{id}
 --------------------------------------------
 
 Route Entry:
-`main.ts` global prefix + validation; request/tenant middleware; `JwtAuthGuard`; `TenantScopeGuard`.
+- Route: `GET /payment-accounts/:id` (`PaymentAccountsController.findOne`)
+- `:id` parsed by `ParseUUIDPipe`
+- Same middleware and guards as above
+
 Controller:
-`PaymentAccountsController.findOne(@Param('id', ParseUUIDPipe) id)`
+- `findOne(@Param('id', ParseUUIDPipe) id: string)`
+
 Service:
-`PaymentAccountsService.findOne(id)`
+- `PaymentAccountsService.findOne(id)`
+
 Repository:
-`PrismaService.paymentAccount.findFirst({ where: { id, tenantId } })`
+- Prisma direct call: `paymentAccount.findFirst({ where: { id, tenantId } })`
+
 DTO/Schema:
-`ParseUUIDPipe` on `id`; `payment_accounts` row shape.
+- Param validation: UUID pipe
+- DB model: `PaymentAccount`
 
 Execution Trace:
-1. `id` is validated as UUID by `ParseUUIDPipe` (`400` on invalid format).
-2. Service resolves `tenantId` from context; missing tenant => `401`.
-3. Service queries account by `id+tenantId`; not found => `404 NotFoundException('Payment account not found')`.
-4. Service returns record through `withComputed()`.
+1. Middleware and guards run (auth + tenant context).
+2. `ParseUUIDPipe` rejects malformed IDs with 400.
+3. Controller passes validated `id` to service.
+4. Service reads `tenantId` from context; throws 401 if absent.
+5. Service queries `payment_accounts` with both `id` and `tenantId`.
+6. If no row, throws `NotFoundException('Payment account not found')`.
+7. Returns raw account record.
 
 Business Rules Observed:
-- Strict tenant scoping, including cross-tenant UUID probes returning 404.
-- Consistent not-found behavior for unknown or foreign IDs.
+- Cross-tenant lookup returns 404 by design (tenant-scoped find).
 
 Missing Rules:
-- `_computed` values are not actually computed.
-- No status-based access rule (inactive accounts are still retrievable, likely intended but undocumented).
+- No computed balance payload despite DTO advertising `_computed`.
 
 Security Risks:
-- No object-level authorization beyond tenant boundary (role/permission model absent).
+- Read allowed to any authenticated role (no role restriction). This may be intended but is not explicitly documented in endpoint contract.
 
 Financial Risks:
-- `_computed` fields are financially incorrect placeholders and can drive incorrect UI/decisions.
+- Missing computed fields can cause client-side fallback calculations or stale assumptions.
 
 Edge Case Failures:
-- No dedicated integration test for invalid UUID on this endpoint.
-- No test asserting behavior for inactive account retrieval.
+- No integration test for invalid UUID on this endpoint.
 
 Concurrency Risks:
-- Minimal read-only race risk.
+- Low for read path.
 
 Test Coverage:
-- Covered: `test/integration/payment-accounts.integration.spec.ts` (happy path + cross-tenant 404), `test/integration/security.integration.spec.ts` (tenant isolation attack).
-- Unit not-found covered in `src/payment-accounts/payment-accounts.service.spec.ts`.
+- Integration: success, cross-tenant 404.
+- Security integration: cross-tenant read blocked.
+- Missing: invalid UUID 400, unauthenticated 401, contract parity for `_computed`.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Compute `_computed` from `payment_entries` and latest transaction date, or remove it from payload.
-- Add explicit invalid-UUID and inactive-account retrieval tests.
+- Resolve `_computed` contract drift.
+- Add explicit tests for UUID validation and unauthenticated access.
 
 --------------------------------------------
 ## API: GET /api/v1/payment-accounts/{id}/balance
 --------------------------------------------
 
 Route Entry:
-`main.ts` global prefix + validation; request/tenant middleware; `JwtAuthGuard`; `TenantScopeGuard`.
+- Route: `GET /payment-accounts/:id/balance` (`PaymentAccountsController.getBalance`)
+- `:id` validated by `ParseUUIDPipe`
+- Same middleware/guards chain
+
 Controller:
-`PaymentAccountsController.getBalance(@Param('id', ParseUUIDPipe) id)`
+- `getBalance(@Param('id', ParseUUIDPipe) id: string)`
+
 Service:
-`PaymentAccountsService.getBalance(id)`
+- `PaymentAccountsService.getBalance(id)`
+
 Repository:
-`PrismaService.paymentAccount.findFirst()` + `PrismaService.$queryRaw` on `payment_entries`
+- Prisma direct:
+  - `paymentAccount.findFirst({ where: { id, tenantId } })`
+  - raw SQL aggregate on `payment_entries`
+
 DTO/Schema:
-`ParseUUIDPipe` on `id`; SQL sums `payment_entries.amount` by `direction` (`IN`/`OUT`) for `tenant_id` + `payment_account_id`; adds `opening_balance` from `payment_accounts`.
+- Response DTO: `PaymentAccountBalanceResponseDto`
+- DB models: `PaymentAccount`, `PaymentEntry`
+- Index support: `@@index([tenantId, paymentAccountId, transactionDate])` on `payment_entries`
 
 Execution Trace:
-1. `id` UUID validated; tenant context enforced.
-2. Service verifies account exists in current tenant; else `404`.
-3. Raw SQL aggregates `SUM(CASE WHEN direction='IN' THEN amount ELSE 0 END)` and `SUM(...'OUT'...)` with parameterized UUIDs.
-4. Service converts `bigint` sums to JS `number`, computes `currentBalance = openingBalance + totalIn - totalOut`.
-5. Returns `{paymentAccountId, openingBalance, totalIn, totalOut, currentBalance}`.
+1. Middleware + guards enforce auth and tenant context.
+2. UUID parsing on `id`.
+3. Service validates tenant context and account existence in same tenant.
+4. Service executes SQL:
+   - `total_in = SUM(amount where direction='IN')`
+   - `total_out = SUM(amount where direction='OUT')`
+5. `safeMoney` converts bigint aggregates to JS numbers with MAX_SAFE_INTEGER guard.
+6. Service computes `currentBalance = openingBalance + totalIn - totalOut`.
+7. Returns `{ paymentAccountId, openingBalance, totalIn, totalOut, currentBalance }`.
 
 Business Rules Observed:
-- Balance is derived from immutable payment entries + opening balance.
-- Tenant filter applied both at account lookup and aggregate query.
-- SQL uses bound parameters (`$queryRaw` template literal), preventing SQL injection.
+- Balance is derived from append-only `payment_entries` + `openingBalance`.
+- Tenant isolation enforced in both account existence check and SQL predicate.
 
 Missing Rules:
-- No as-of-date support on this endpoint (only current cumulative balance).
-- No safeguard for numeric overflow/safe-integer boundaries when converting `bigint` totals.
-- No explicit filter to `POSTED` transactions; relies on invariant that only posted transactions create `payment_entries`.
+- No as-of-date parameter (current balance only); acceptable for this endpoint, but not explicitly documented as current-only behavior.
+- No overflow guard on final `currentBalance` arithmetic after `safeMoney` conversion.
 
 Security Risks:
-- Low direct injection risk due parameterized query.
-- Same RBAC gap (any authenticated tenant user can read all account balances).
+- None found beyond standard auth/tenant controls.
 
 Financial Risks:
-- `bigint -> number` conversion can lose precision for large cumulative balances, causing silent monetary drift in API output.
+- Potential precision overflow on final arithmetic (`openingBalance + totalIn - totalOut`) is not explicitly guarded.
+- If `_computed` is expected elsewhere, contract inconsistency may cause duplicated balance logic in clients.
 
 Edge Case Failures:
-- Potential precision loss when totals exceed `Number.MAX_SAFE_INTEGER`.
-- No explicit handling for corrupted negative `payment_entries.amount` values (would skew balance).
+- No tests for extreme values near JS safe-integer bounds.
+- No test for malformed UUID on this route.
 
 Concurrency Risks:
-- Read consistency is non-transactional; balance may reflect intermediate state during concurrent postings (eventual consistency for reads).
+- Read is non-atomic with concurrent writes (normal for current-state read APIs); snapshot inconsistency is possible during heavy write traffic.
 
 Test Coverage:
-- Strong integration coverage in `test/integration/balance-queries.integration.spec.ts`: no transactions, MONEY_OUT, MONEY_IN, mixed in/out, unknown ID, tenant isolation.
-- Missing: very large totals/precision stress, internal-transfer-specific two-leg reconciliation test for this endpoint.
+- Integration coverage is strong for normal finance flows (opening only, money out, money in, mixed, unknown account, cross-tenant access) in `test/integration/balance-queries.integration.spec.ts`.
+- Missing: numeric boundary tests and malformed UUID test.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Return monetary aggregates as stringified bigint or enforce safe-range checks before casting.
-- Add precision/overflow tests and explicit reconciliation tests with transfer legs.
-- Consider optional `asOfDate` for audit/reconciliation parity with reports endpoint.
+- Add explicit safe-range guard for final `currentBalance` computation.
+- Add stress/boundary tests for large aggregate sums.
 
 --------------------------------------------
 ## API: PATCH /api/v1/payment-accounts/{id}
 --------------------------------------------
 
 Route Entry:
-`main.ts` global prefix + validation; request/tenant middleware; `JwtAuthGuard`; `TenantScopeGuard`.
+- Route: `PATCH /payment-accounts/:id` (`PaymentAccountsController.update`)
+- Guarded by `@Roles('OWNER', 'ADMIN')`
+- Same middleware + global guards
+
 Controller:
-`PaymentAccountsController.update(@Param('id', ParseUUIDPipe) id, @Body() dto)`
+- `update(@Param('id', ParseUUIDPipe) id, @Body() dto: UpdatePaymentAccountDto)`
+
 Service:
-`PaymentAccountsService.update(id, dto)`
+- `PaymentAccountsService.update(id, dto)`
+
 Repository:
-`PrismaService.paymentAccount.findFirst()` then `PrismaService.paymentAccount.update()`
+- Prisma direct:
+  - `paymentAccount.findFirst({ where: { id, tenantId } })`
+  - `paymentAccount.update({ where: { id, tenantId }, data: dto })`
+
 DTO/Schema:
-`UpdatePaymentAccountDto` permits only optional `name` (2..100 chars). Validation whitelist forbids non-declared fields.
+- `UpdatePaymentAccountDto` (only optional `name`, length 2..100)
+- Global validation pipe: whitelist + forbid non-whitelisted
 
 Execution Trace:
-1. `id` validated as UUID; body validated against `UpdatePaymentAccountDto`.
-2. Service checks tenant context and existence (`findFirst` by `id+tenantId`), else 404.
-3. Service executes update with `data: dto`; Prisma unique violation `P2002` mapped to `409 ConflictException`.
-4. Updated entity returned with placeholder `_computed` block.
+1. Middleware sets request context; guards enforce auth/tenant; roles guard enforces OWNER/ADMIN.
+2. UUID pipe validates `id`; validation pipe validates body and rejects unknown fields.
+3. Service checks tenant context.
+4. Service checks existence by `id + tenantId`; 404 if missing.
+5. Service runs update with DTO data.
+6. Prisma P2002 (duplicate name by unique index `[tenantId, name]`) mapped to 409.
+7. Updated row returned.
 
 Business Rules Observed:
-- Type and opening balance are effectively immutable through this endpoint (DTO excludes them).
-- Duplicate name protection enforced via DB unique `(tenant_id,name)`.
-- Tenant-scoped updates only.
+- Only `name` is updatable via DTO; `type` and `openingBalance` updates are blocked at validation layer.
+- Tenant isolation and cross-tenant 404 behavior are enforced.
 
 Missing Rules:
-- No normalization of `name` (trim/case policy) before uniqueness check.
-- No explicit guard for empty PATCH payload (currently accepted, no-op update semantics).
-- No domain checks for reserved names documented in implementation plan.
+- No normalization/trim on `name` before save.
+- No reserved-name validation from implementation plan (`Cash`, `Bank`, etc.).
 
 Security Risks:
-- RBAC missing for master-data mutation (any authenticated role can rename payment accounts).
+- No integration test proving non-OWNER/ADMIN gets 403.
 
 Financial Risks:
-- Returning placeholder `_computed` can propagate false financial data immediately after update.
-- Name changes are allowed regardless of posting history; audit note/reason not captured.
+- Semantic duplicates (`"Cash"` vs `" cash "` vs case variants) can fragment account usage/reporting.
 
 Edge Case Failures:
-- No explicit test for duplicate rename through this endpoint (integration).
-- No test for invalid UUID and not-found in this specific endpoint suite.
+- Whitespace-only names can pass length checks.
+- Empty payload behavior is not explicitly tested.
 
 Concurrency Risks:
-- Lost-update risk on concurrent renames (last write wins; no optimistic version check).
+- Concurrent rename collisions rely on DB unique constraint (good); one request fails 409.
 
 Test Coverage:
-- Integration: `test/integration/payment-accounts.integration.spec.ts` validates successful rename and rejection of non-whitelisted `type` update.
-- Cross-tenant mutation blocked in `test/integration/security.integration.spec.ts`.
-- Unit: duplicate conflict path covered.
-- Missing: no-op patch, duplicate rename integration, invalid UUID path.
+- Integration: rename success; type update rejected (400).
+- Security integration: cross-tenant update blocked.
+- Unit: duplicate name conflict mapping.
+- Missing: 403 role tests, normalization tests, whitespace/case-variant duplication tests.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Add `name` normalization (`trim`, canonical case policy) and corresponding unique policy.
-- Reject empty update payloads with clear 400.
-- Add endpoint tests for duplicate rename, invalid UUID, and no-op behavior.
-- Introduce RBAC for mutation endpoints.
+- Normalize `name` (`trim`, optional canonical case policy) before persistence.
+- Add role-based authorization tests (403) and input-normalization tests.
 
 --------------------------------------------
 ## API: PATCH /api/v1/payment-accounts/{id}/status
 --------------------------------------------
 
 Route Entry:
-`main.ts` global prefix + validation; request/tenant middleware; `JwtAuthGuard`; `TenantScopeGuard`.
+- Route: `PATCH /payment-accounts/:id/status` (`PaymentAccountsController.updateStatus`)
+- Guarded by `@Roles('OWNER', 'ADMIN')`
+
 Controller:
-`PaymentAccountsController.updateStatus(@Param('id', ParseUUIDPipe) id, @Body() dto)`
+- `updateStatus(@Param('id', ParseUUIDPipe) id, @Body() dto: UpdateStatusDto)`
+
 Service:
-`PaymentAccountsService.updateStatus(id, dto)`
+- `PaymentAccountsService.updateStatus(id, dto)`
+
 Repository:
-`PrismaService.paymentAccount.findFirst()` then `PrismaService.paymentAccount.update()`
+- Prisma direct + raw SQL:
+  - `paymentAccount.findFirst`
+  - `$queryRaw` balance check on `payment_entries`
+  - `$transaction([paymentAccount.update, statusChangeLog.create])`
+
 DTO/Schema:
-`UpdateStatusDto`: `status` in `ACTIVE|INACTIVE`, optional `reason` string.
+- `UpdateStatusDto` (`status` ACTIVE/INACTIVE, optional `reason`)
+- DB model: `StatusChangeLog`
 
 Execution Trace:
-1. `id` UUID validated; body validated (`status` enum, optional `reason`).
-2. Service loads tenant context and checks account existence by `id+tenantId`; not found => 404.
-3. Service updates `status` only; ignores `reason` entirely.
-4. Returns updated account via `withComputed()` placeholder values.
+1. Middleware/guards execute; roles guard enforces OWNER/ADMIN.
+2. UUID + body validation occurs.
+3. Service resolves tenant context and reads existing account (`id + tenantId`), else 404.
+4. If target status is `INACTIVE`, service runs SQL to compute current balance:
+   - `opening_balance + SUM(IN as +, OUT as -)`.
+5. If computed balance is non-zero, throws 400.
+6. Otherwise executes DB transaction:
+   - updates payment account status
+   - inserts `status_change_logs` audit row
+7. Returns updated account.
 
 Business Rules Observed:
-- Status transition constrained to ACTIVE/INACTIVE.
-- Cross-tenant status changes blocked at service query layer.
+- Deactivation is blocked when current balance != 0.
+- Status changes are audit-logged.
 
 Missing Rules:
-- No check preventing inactivation of non-zero-balance account (explicitly required in implementation plan text).
-- `reason` is accepted but not persisted anywhere (audit trail gap).
-- No idempotent short-circuit when requested status already equals current.
-- No check for downstream operational impact (e.g., disabling account with pending settlements).
+- No same-status idempotency short-circuit; repeated requests still write audit rows.
+- No requirement that `reason` be present when deactivating.
+- API plan expected 409 for non-zero balance, implementation returns 400.
 
 Security Risks:
-- RBAC absent; any authenticated role can deactivate/activate payment accounts.
+- No integration tests for role-based 403 behavior on this privileged endpoint.
 
 Financial Risks:
-- Deactivating account with funds can strand operational cash movement workflows (draft creation/posting paths require active account).
-- Missing deactivation rationale undermines auditability for financial control actions.
-- Placeholder `_computed` returned as zeros.
+- TOCTOU race: non-zero-balance check happens before update transaction; concurrent posting can create payment entries between check and status update.
+- Possible end state: account set INACTIVE despite becoming non-zero during race window.
 
 Edge Case Failures:
-- No test for inactive->inactive idempotent behavior.
-- No test for inactivation with non-zero balance.
-- No test asserting `reason` persistence (it is currently dropped).
+- No tests for deactivation block on non-zero balance.
+- No tests for status-change log insertion correctness.
+- No tests for repeated same-status requests.
 
 Concurrency Risks:
-- Concurrent status toggles are last-write-wins with no version check.
+- High risk on deactivation path due check/update split across separate DB operations.
+- No explicit lock on `payment_accounts` row during pre-check.
 
 Test Coverage:
-- Basic happy path in `test/integration/payment-accounts.integration.spec.ts`.
-- Cross-tenant status mutation blocked in `test/integration/security.integration.spec.ts`.
-- Missing most business-rule tests for status transitions.
+- Integration: only happy-path status update.
+- Security integration: cross-tenant status update blocked.
+- Unit: happy-path updateStatus.
+- Missing: core negative path (non-zero balance), race/concurrency tests, 403 role tests, same-status idempotency tests.
 
 Verdict:
 ❌ Unsafe
 
 Required Fixes:
-- Enforce `cannot inactivate when currentBalance != 0` (or define explicit override flow).
-- Persist `reason` to audit trail (e.g., notes/audit table/event log).
-- Add transition validation and idempotent semantics tests.
-- Restrict status changes to privileged roles.
+- Move balance check + status update into one serializable transaction with row-level lock strategy.
+- Add concurrency tests for status-change vs payment posting races.
+- Enforce and test explicit behavior for same-status updates and deactivation reason policy.
+- Align error code semantics (400 vs 409) with chosen API contract and document it.
 
 --------------------------------------------
 ## API: POST /api/v1/payment-accounts
 --------------------------------------------
 
 Route Entry:
-`main.ts` global prefix + validation; request/tenant middleware; `JwtAuthGuard`; `TenantScopeGuard`.
+- Route: `POST /payment-accounts` (`PaymentAccountsController.create`)
+- Guarded by `@Roles('OWNER', 'ADMIN')`
+
 Controller:
-`PaymentAccountsController.create(@Body() dto)`
+- `create(@Body() dto: CreatePaymentAccountDto)`
+
 Service:
-`PaymentAccountsService.create(dto)`
+- `PaymentAccountsService.create(dto)`
+
 Repository:
-`PrismaService.paymentAccount.create()`
+- Prisma direct:
+  - `paymentAccount.create`
+
 DTO/Schema:
-`CreatePaymentAccountDto`: `name` string 2..100, `type` enum (`CASH|BANK|WALLET|CARD`), optional integer `openingBalance` (default 0); DB unique `(tenant_id,name)`.
+- `CreatePaymentAccountDto`:
+  - `name` required, string, length 2..100
+  - `type` enum `CASH|BANK|WALLET|CARD`
+  - `openingBalance` optional integer (negative allowed)
+- DB unique constraint: `@@unique([tenantId, name])`
 
 Execution Trace:
-1. Body validated/transformed by ValidationPipe; unknown fields rejected.
-2. Service reads `tenantId` and `userId` from context; missing tenant => 401.
-3. Service inserts account row with tenant scoping and optional `createdBy`, catches Prisma `P2002` to return 409 on duplicate name.
-4. Returns created row with `withComputed()` placeholder values.
+1. Middleware + guards run; roles guard limits to OWNER/ADMIN.
+2. Validation pipe enforces DTO and blocks unknown fields.
+3. Service reads `tenantId`/`userId` from context.
+4. Service inserts `payment_accounts` row with tenant-scoped data.
+5. On Prisma P2002, service maps to 409 duplicate-name conflict.
+6. Returns created account.
 
 Business Rules Observed:
-- Enforces allowed account types and integer money input.
-- Allows negative opening balances (consistent with overdraft use case).
-- Tenant-scoped uniqueness enforced by DB constraint and conflict mapping.
+- Name uniqueness is enforced at DB level per tenant.
+- Negative opening balances are allowed (overdraft scenario).
+- Money stored as integer (`openingBalance` int).
 
 Missing Rules:
-- No reserved-name validation (`Cash`, `Bank`, etc.) despite documented requirement.
-- No `name` normalization (leading/trailing spaces and case variants can bypass practical uniqueness expectations).
-- No explicit numeric range guard for `openingBalance` (DB overflow can surface as unhandled 500).
-- No role-based restriction for account creation.
+- No reserved-name restriction from implementation plan.
+- No name trimming/canonicalization before uniqueness check.
+- No idempotency key enforcement for this write endpoint despite high-level API conventions.
 
 Security Risks:
-- Mutation allowed for all authenticated roles.
+- No integration test confirming non-OWNER/ADMIN role receives 403.
 
 Financial Risks:
-- `_computed` financial fields are hardcoded zeros on create response.
-- Potential integer overflow path for very large opening balances can cause unpredictable failures.
+- Name normalization gaps can create semantically duplicate accounts and reporting ambiguity.
 
 Edge Case Failures:
-- Names differing only by case/whitespace may coexist depending DB collation and input formatting.
-- Very large absolute opening balances may cause DB error (not mapped to domain error).
+- Whitespace-only names can pass validation.
+- Case-variant duplicates are not prevented by code (DB collation-dependent behavior).
 
 Concurrency Risks:
-- Concurrent duplicate-name creates rely on DB unique index; one request correctly fails with 409.
+- Duplicate create race is safely handled by DB unique constraint + 409 mapping.
 
 Test Coverage:
-- Integration (`test/integration/payment-accounts.integration.spec.ts`): happy path, opening balance, negative opening balance, duplicate name, invalid/missing type, auth required.
-- Unit (`src/payment-accounts/payment-accounts.service.spec.ts`): success, duplicate conflict, missing-tenant unauthorized.
-- Missing: reserved-name validation, whitespace/case normalization, overflow/error-mapping tests.
+- Integration: create success, opening balance positive/negative, duplicate-name conflict, invalid/missing type, unauthenticated 401.
+- Unit: success + duplicate P2002 mapping.
+- Missing: 403 role checks, name normalization/reserved-name tests, numeric boundary tests for opening balance.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Implement input normalization + reserved-name policy.
-- Add explicit bounded integer validation for opening balances.
-- Remove or correctly compute `_computed` in create response.
-- Add RBAC enforcement for account creation.
+- Add deterministic name normalization and reserved-name rule (or explicitly de-scope in contract).
+- Add role-based 403 integration test coverage.
+- Document or enforce idempotency policy for master-data writes.
+
+--------------------------------------------

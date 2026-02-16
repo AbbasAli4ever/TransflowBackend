@@ -8,444 +8,395 @@ Phase 8 — Suppliers
 --------------------------------------------
 
 Route Entry:
-- Global prefix `api/v1` is applied in `src/main.ts:27`.
-- Controller route is `@Controller('suppliers')` + `@Get()` in `src/suppliers/suppliers.controller.ts:28` and `src/suppliers/suppliers.controller.ts:42`.
-- Request flow middleware/guards:
-  - `RequestContextMiddleware` sets request ID in `src/common/middleware/request-context.middleware.ts:8`.
-  - `TenantContextMiddleware` parses bearer JWT context in `src/common/middleware/tenant-context.middleware.ts:11`.
-  - `JwtAuthGuard` enforces auth in `src/common/guards/jwt-auth.guard.ts:12`.
-  - `TenantScopeGuard` enforces `tenantId` in `src/common/guards/tenant-scope.guard.ts:23`.
-
+`main.ts` global prefix `api/v1` + global guards (`JwtAuthGuard` -> `TenantScopeGuard` -> `RolesGuard`) + global `ValidationPipe`; route handler `SuppliersController.findAll`.
 Controller:
-- `SuppliersController.findAll()` in `src/suppliers/suppliers.controller.ts:52`.
-
+`src/suppliers/suppliers.controller.ts` -> `@Get()` `findAll(@Query() query: ListSuppliersQueryDto)`.
 Service:
-- `SuppliersService.findAll()` in `src/suppliers/suppliers.service.ts:36`.
-
+`src/suppliers/suppliers.service.ts` -> `findAll(query)`.
 Repository:
-- Prisma `supplier.findMany` + `supplier.count` in `src/suppliers/suppliers.service.ts:56`.
-
+`prisma.supplier.findMany` + `prisma.supplier.count`.
 DTO/Schema:
-- Query DTO: `ListSuppliersQueryDto` in `src/suppliers/dto/list-suppliers-query.dto.ts:5`.
-- Pagination base: `PaginationQueryDto` in `src/common/dto/pagination-query.dto.ts:5`.
-- Validation pipe: `buildValidationPipe()` in `src/common/pipes/validation.pipe.ts:27`.
+`ListSuppliersQueryDto` + `PaginationQueryDto`; `Supplier` table in `prisma/schema.prisma`.
 
 Execution Trace:
-1. HTTP request enters middleware chain, request context is initialized.
-2. JWT is validated by passport guard; tenant context is enforced by tenant scope guard.
-3. Query params are transformed/validated (`page`, `limit`, `status`, `sortBy`, `sortOrder`).
-4. Service reads `tenantId` from async context and hard-filters all supplier reads by tenant.
-5. Optional status/search filters are applied; paginated query and count are executed in parallel.
-6. Response is returned via `paginateResponse` with `_computed` placeholders.
+1. JWT is required (no `@Public`), tenant context is set from token.
+2. Query params are validated/transformed (`page`, `limit`, `status`, `sortBy`, `sortOrder`).
+3. Service builds tenant-scoped `where` (`tenantId`, optional `status`, optional `OR` search on `name`/`phone`).
+4. Service executes parallel `findMany` + `count`, then wraps with `paginateResponse`.
+5. Response returns `{ data, meta }` with raw supplier rows.
 
 Business Rules Observed:
-- Tenant isolation is enforced in query where-clause.
+- Tenant isolation is enforced in query (`where.tenantId`).
 - Default status filter is `ACTIVE` unless `status=ALL`.
-- Sorting is allowlisted to `name|createdAt` and `asc|desc`.
+- Sort field/order are allowlisted (`name|createdAt`, `asc|desc`).
 
 Missing Rules:
-- No business rule to exclude suppliers with soft-deleted semantics beyond status.
-- `_computed` financial fields are placeholders (always zero) and not actual derived balances.
+- No explicit test for unauthorized/invalid query combinations on this endpoint.
+- No explicit maximum search length control.
 
 Security Risks:
-- No direct injection path observed; query args are validated and sort fields are enum-restricted.
+- Low: endpoint is read-only and tenant-scoped.
+- Test gap: no direct integration test for auth failure on this route.
 
 Financial Risks:
-- Returned `_computed.totalPurchases` and `_computed.currentBalance` are always `0`, which can mislead downstream consumers.
+- Low direct financial impact (master data listing only).
 
 Edge Case Failures:
-- No normalization/trim on `search`; whitespace-only search can create noisy query behavior.
+- None critical identified in execution path.
 
 Concurrency Risks:
-- Read endpoint; no write race in this path.
+- None meaningful (read-only).
 
 Test Coverage:
-- Covered: pagination, search, tenant isolation in `test/integration/suppliers.integration.spec.ts:89`.
-- Missing: unauthenticated access test, invalid query validation tests (bad `status`, `sortBy`, `limit` bounds), sort-order assertions.
+- Covered: pagination, search, tenant isolation (`test/integration/suppliers.integration.spec.ts`).
+- Missing: explicit 401 and invalid query-value assertions for this route.
 
 Verdict:
-⚠ Risky
+✅ Safe
 
 Required Fixes:
-- Replace `_computed` placeholders with real derived values or remove these fields from response contract.
-- Add integration tests for auth rejection and query validation errors.
+- Add explicit auth/validation negative tests for this endpoint.
 
 --------------------------------------------
 ## API: GET /api/v1/suppliers/{id}
 --------------------------------------------
 
 Route Entry:
-- Controller route `@Get(':id')` in `src/suppliers/suppliers.controller.ts:56`.
-- `ParseUUIDPipe` applied at controller param in `src/suppliers/suppliers.controller.ts:63`.
-- Same global middleware/guards path as above.
-
+Same global middleware/guards/pipes chain; route handler `SuppliersController.findOne`.
 Controller:
-- `SuppliersController.findOne()` in `src/suppliers/suppliers.controller.ts:63`.
-
+`@Get(':id')` with `ParseUUIDPipe`.
 Service:
-- `SuppliersService.findOne()` in `src/suppliers/suppliers.service.ts:69`.
-
+`SuppliersService.findOne(id)`.
 Repository:
-- Prisma `supplier.findFirst({ where: { id, tenantId }})` in `src/suppliers/suppliers.service.ts:73`.
-
+`prisma.supplier.findFirst({ where: { id, tenantId } })`.
 DTO/Schema:
-- Path UUID validated by Nest `ParseUUIDPipe`.
+Path `id` validated as UUID; `Supplier` model.
 
 Execution Trace:
-1. Request enters context/auth/tenant pipeline.
-2. UUID is validated before service call.
-3. Service enforces tenant context.
-4. Supplier is loaded with `id + tenantId` filter.
-5. 404 returned if missing; otherwise entity is returned with `_computed` placeholders.
+1. Auth + tenant context enforced globally.
+2. `id` is validated by `ParseUUIDPipe`.
+3. Service requires `tenantId` from request context.
+4. Service fetches supplier by `id + tenantId`.
+5. Not found -> `NotFoundException`; else raw supplier object returned.
 
 Business Rules Observed:
-- Cross-tenant read returns not-found behavior.
+- Cross-tenant access returns 404 via tenant-scoped lookup.
 
 Missing Rules:
-- No check for supplier status when fetching detail (ACTIVE/INACTIVE both returned).
-- Placeholder `_computed` remains non-authoritative.
+- None critical for read path.
 
 Security Risks:
-- UUID parsing blocks malformed path IDs.
-- Tenant isolation implemented at service query level.
+- Low: UUID validation + tenant scoping are present.
 
 Financial Risks:
-- `_computed` financial fields are non-real values and can be consumed as truth by clients.
+- None direct (read-only master data detail).
 
 Edge Case Failures:
-- None critical in this direct fetch path.
+- None critical identified.
 
 Concurrency Risks:
-- None (read only).
+- None meaningful (read-only).
 
 Test Coverage:
-- Covered: happy path, not-found, cross-tenant 404 in `test/integration/suppliers.integration.spec.ts:139`.
-- Missing: explicit invalid UUID test and no-auth test for this route.
+- Covered: success, 404 missing, cross-tenant 404 (`test/integration/suppliers.integration.spec.ts`).
+- Missing: explicit invalid UUID and unauthenticated access test for this route.
 
 Verdict:
-⚠ Risky
+✅ Safe
 
 Required Fixes:
-- Remove or correctly compute `_computed` financial fields.
-- Add route-specific tests for invalid UUID and unauthenticated access.
+- Add explicit invalid UUID and 401 tests.
 
 --------------------------------------------
 ## API: GET /api/v1/suppliers/{id}/balance
 --------------------------------------------
 
 Route Entry:
-- Controller route `@Get(':id/balance')` in `src/suppliers/suppliers.controller.ts:90`.
-- `ParseUUIDPipe` at `src/suppliers/suppliers.controller.ts:97`.
-
+Global guards/pipes + `SuppliersController.getBalance`.
 Controller:
-- `SuppliersController.getBalance()` in `src/suppliers/suppliers.controller.ts:97`.
-
+`@Get(':id/balance')` with `ParseUUIDPipe`.
 Service:
-- `SuppliersService.getBalance()` in `src/suppliers/suppliers.service.ts:122`.
-
+`SuppliersService.getBalance(id)`.
 Repository:
-- Supplier existence check via Prisma `findFirst` at `src/suppliers/suppliers.service.ts:126`.
-- Raw SQL against `ledger_entries` at `src/suppliers/suppliers.service.ts:131`.
-
+- `prisma.supplier.findFirst({ id, tenantId })`.
+- Raw SQL aggregation on `ledger_entries` joined to `transactions`.
 DTO/Schema:
-- Path UUID only.
-- Response model documented as `SupplierBalanceResponseDto`.
+Path UUID pipe; response documented via `SupplierBalanceResponseDto`.
 
 Execution Trace:
-1. Request passes middleware and auth/tenant guards.
-2. UUID parsing runs.
-3. Service verifies supplier belongs to tenant.
-4. Raw SQL aggregates AP increases/decreases for tenant+supplier.
-5. Bigint SQL sums are cast to JS `Number` and returned as `{ totalPurchases, totalPaid, currentBalance }`.
+1. Auth + tenant guard set context.
+2. Service verifies supplier exists in tenant.
+3. Raw SQL computes:
+4. `ap_increase` (purchase obligations), `ap_payments` (`AP_DECREASE` excluding `SUPPLIER_RETURN`), `ap_returns` (`AP_DECREASE` from `SUPPLIER_RETURN`).
+5. `safeMoney` converts bigint totals; response computes `currentBalance = purchases - payments - returns`.
 
 Business Rules Observed:
-- Balance is derived from ledger entries (not stored in supplier table).
-- Tenant filter is applied in aggregate query.
+- Balance is derived from append-only ledger entries.
+- Tenant filter applied directly in SQL.
+- Supplier returns are separated from payment decreases.
 
 Missing Rules:
-- No explicit `POSTED` transaction filter in query, despite canonical docs requiring posted-only derivation.
-- No separation of AP decreases by source type; supplier returns and payments are merged into `totalPaid`.
+- No explicit `t.status='POSTED'` predicate in SQL (depends on invariant that only posted creates entries).
+- No `asOfDate` support in this endpoint (only reports module provides point-in-time balance).
 
 Security Risks:
-- SQL injection risk is low; query uses parameterized template values.
+- Raw SQL is parameterized; injection risk is low.
 
 Financial Risks:
-- `totalPaid` can be semantically wrong because `AP_DECREASE` includes non-payment events (e.g., supplier returns).
-- Converting bigint to JS `Number` risks precision loss at large cumulative values.
-- If non-posted ledger rows ever exist, this endpoint will include them.
+- Response contract mismatch risk: DTO documents `totalPaid`, service returns `totalPayments` and `totalReturns`.
+- Potential reporting drift if non-posted ledger entries ever exist (defense-in-depth missing).
 
 Edge Case Failures:
-- Negative balances (supplier credit) are returned but not explicitly typed/labeled; client may misinterpret.
+- Very large aggregates can throw precision error via `safeMoney` (500), with no domain-specific handling.
 
 Concurrency Risks:
-- Read path only; no write race here.
+- Read query may observe rapidly changing state during concurrent posting; no snapshot consistency across separate endpoints.
 
 Test Coverage:
-- Covered: zero state, purchases, partial payment, accumulation, 404, tenant isolation in `test/integration/balance-queries.integration.spec.ts:136`.
-- Missing: supplier return impact case, bigint/large-number case, invalid UUID/no-auth route tests.
+- Covered: zero balance, purchases, partial payment, multi-purchase aggregation, 404, tenant isolation (`test/integration/balance-queries.integration.spec.ts`).
+- Missing: supplier-return scenarios and response-contract key assertions.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Join `transactions` and enforce `t.status = 'POSTED'` in balance query.
-- Split returned fields into `totalPayments` and `totalReturns` (or rename `totalPaid` to `totalApDecrease`).
-- Return money as string/int-safe format to avoid JS precision drift for large sums.
+- Align response DTO keys with actual payload (`totalPayments`, `totalReturns`) or change service output.
+- Add supplier-return balance test and contract test.
+- Add explicit `transactions.status='POSTED'` filter in SQL for defense-in-depth.
 
 --------------------------------------------
 ## API: GET /api/v1/suppliers/{id}/open-documents
 --------------------------------------------
 
 Route Entry:
-- Controller route `@Get(':id/open-documents')` in `src/suppliers/suppliers.controller.ts:101`.
-- `ParseUUIDPipe` at `src/suppliers/suppliers.controller.ts:108`.
-
+Global guards/pipes + `SuppliersController.getOpenDocuments`.
 Controller:
-- `SuppliersController.getOpenDocuments()` in `src/suppliers/suppliers.controller.ts:108`.
-
+`@Get(':id/open-documents')` with `ParseUUIDPipe`.
 Service:
-- `SuppliersService.getOpenDocuments()` in `src/suppliers/suppliers.service.ts:152`.
-
+`SuppliersService.getOpenDocuments(id)`.
 Repository:
-- Supplier existence check via Prisma `findFirst`.
-- Raw SQL reads `transactions` + `allocations` in `src/suppliers/suppliers.service.ts:161`.
-
+- `prisma.supplier.findFirst({ id, tenantId })`.
+- Raw SQL over `transactions` + `allocations`.
 DTO/Schema:
-- Path UUID only.
-- Swagger response type is unspecified (`@ApiOkResponse` has no schema type).
+Path UUID pipe; no dedicated response DTO enforcing shape.
 
 Execution Trace:
-1. Auth/tenant context established via global pipeline.
-2. UUID validated.
-3. Service verifies supplier exists in current tenant.
-4. Raw SQL selects posted PURCHASE docs and computes `outstanding = total_amount - SUM(allocations)`.
-5. Fully-settled documents are excluded by `HAVING outstanding > 0`.
-6. Totals and per-doc fields are converted from bigint/date to JSON response.
+1. Auth + tenant context enforced.
+2. Service verifies supplier exists in tenant.
+3. SQL selects posted `PURCHASE` documents for supplier, left joins allocations by `applies_to_transaction_id`.
+4. Outstanding is computed as `total_amount - SUM(amount_applied)`.
+5. `HAVING outstanding > 0` filters only open docs; rows are ordered by `transaction_date`.
+6. Response returns supplier info, total outstanding, and per-document amounts.
 
 Business Rules Observed:
-- Open documents are limited to posted PURCHASE transactions.
-- Allocation-based outstanding is computed document-wise.
-- Tenant isolation enforced on transactions and allocations (`tenant_id` filter on both tables).
+- Open docs are computed from posted purchase totals minus allocations.
+- Tenant scoping is applied in both transaction and allocation predicates.
 
 Missing Rules:
-- No `asOfDate` or `includeFullyPaid` support although implementation plan docs specify these parameters.
-- No handling of supplier credits/returns at document level (only allocations reduce outstanding).
-- No response DTO contract in Swagger for this endpoint.
+- No handling of supplier returns/credit notes in per-document outstanding logic.
+- No `asOfDate` or `includeFullyPaid` query support from earlier phase spec.
+- No allocation detail in response despite historical spec showing allocation lines.
 
 Security Risks:
-- SQL injection risk is low due parameterized query values.
+- Parameterized SQL limits injection risk.
+- No explicit response DTO increases contract drift risk.
 
 Financial Risks:
-- Supplier returns create `AP_DECREASE` but no allocation rows (`src/transactions/posting.service.ts:621`), so open document outstanding can diverge from supplier payable balance.
-- Bigint→Number conversion may lose precision for high-volume tenants.
+- Critical: outstanding can be overstated when AP is reduced by supplier returns (returns create `AP_DECREASE` but no allocation rows), causing open-doc totals to diverge from actual payable.
+- Auto-allocation/payment flows can appear inconsistent to users when credits exist.
 
 Edge Case Failures:
-- Open-doc total can overstate net payable when supplier has unapplied credits.
-- Ordering only by date can be nondeterministic for same-day documents.
+- Overstated open docs after returns/credits.
+- Frontend can display unpaid purchase while net supplier balance is settled/credit.
 
 Concurrency Risks:
-- Read consistency depends on default isolation; concurrent posting can cause transient before/after views (acceptable, but not snapshot-consistent).
+- Concurrent allocations/postings can shift outstanding during read; expected eventually consistent reads.
 
 Test Coverage:
-- Covered: empty, partial, full payment exclusion, 404, 401, tenant isolation in `test/integration/open-documents.integration.spec.ts:51`.
-- Missing: supplier return credit scenario, large value precision scenario, invalid UUID behavior, same-day deterministic ordering.
+- Covered: empty, single open purchase, partial payment, fully paid excluded, 404, 401, tenant isolation (`test/integration/open-documents.integration.spec.ts`).
+- Missing: supplier-return/credit-note interaction, multi-document ordering determinism, invalid UUID case.
 
 Verdict:
-⚠ Risky
+❌ Unsafe
 
 Required Fixes:
-- Define and implement credit/return treatment for document outstanding (allocation against source purchase, or explicit credit offset field).
-- Add `asOfDate` filtering if still part of contract.
-- Add explicit response DTO for Swagger and client stability.
+- Incorporate supplier-return effects into open-document outstanding (or explicitly model/apply credit-note allocations).
+- Add tests proving consistency between `GET /suppliers/:id/balance` and `GET /suppliers/:id/open-documents` under returns.
+- Add a strict response DTO and contract tests.
 
 --------------------------------------------
 ## API: PATCH /api/v1/suppliers/{id}
 --------------------------------------------
 
 Route Entry:
-- Controller route `@Patch(':id')` in `src/suppliers/suppliers.controller.ts:67`.
-- Body validated via `UpdateSupplierDto` and global validation pipe.
-
+Global guards + roles (`@Roles('OWNER','ADMIN')`) + validation pipe.
 Controller:
-- `SuppliersController.update()` in `src/suppliers/suppliers.controller.ts:75`.
-
+`@Patch(':id')` -> `SuppliersController.update(id, dto)`.
 Service:
-- `SuppliersService.update()` in `src/suppliers/suppliers.service.ts:81`.
-
+`SuppliersService.update(id, dto)`.
 Repository:
-- Prisma `findFirst` for tenant-scoped existence.
-- Prisma `findFirst` for case-insensitive duplicate-name check.
-- Prisma `update` write.
-
+- `prisma.supplier.findFirst({ id, tenantId })`.
+- `prisma.supplier.update({ where: { id, tenantId }, data: dto })`.
 DTO/Schema:
-- `UpdateSupplierDto` in `src/suppliers/dto/update-supplier.dto.ts:5`.
-- UUID validated with `ParseUUIDPipe`.
+`UpdateSupplierDto` (optional name/phone/address/notes with validators).
 
 Execution Trace:
-1. Request passes auth/tenant pipeline.
-2. Path UUID and body DTO validations run.
-3. Service verifies record exists in current tenant.
-4. If name changed, duplicate-name lookup is executed.
-5. Supplier row is updated and returned with `_computed` placeholders.
+1. Auth + tenant context enforced.
+2. RolesGuard checks role from request context.
+3. Path UUID and body DTO validated.
+4. Service verifies supplier exists in tenant.
+5. Update executes with tenant-scoped where and partial DTO.
+6. `P2002` unique conflict maps to 409; success returns updated supplier row.
 
 Business Rules Observed:
-- Prevents case-insensitive duplicate name within tenant at application layer.
-- Cross-tenant update attempts return 404 behavior.
+- Only `OWNER/ADMIN` can update.
+- Tenant scoping is enforced before update.
+- Duplicate name conflict handled via DB constraint mapping.
 
 Missing Rules:
-- No immutable-field policy once supplier has posted transactions.
-- No status check to prevent editing inactive supplier metadata.
-- No audit field update for who changed data and why.
+- No block on updating inactive suppliers or suppliers linked to posted history (policy-dependent).
+- No optimistic concurrency/version check.
 
 Security Risks:
-- Tenant isolation enforced by lookup+update flow.
+- Role enforcement exists, but no supplier-specific 403 test coverage.
 
 Financial Risks:
-- Placeholder `_computed` fields in response remain non-authoritative.
+- Moderate: metadata edits can alter operational identifiers used by staff, though not ledger math directly.
 
 Edge Case Failures:
-- Accepts empty PATCH body and returns success without meaningful change.
+- Race window between `findFirst` and `update`; deletion/state change can produce uncaught Prisma errors (possible 500).
 
 Concurrency Risks:
-- TOCTOU race: duplicate-name check and write are non-atomic; parallel updates can bypass uniqueness because DB has no unique `(tenant_id, lower(name))` constraint.
+- Last-write-wins behavior; no conflict detection for concurrent edits.
 
 Test Coverage:
-- Covered: happy path, not-found, duplicate-name rejection in `test/integration/suppliers.integration.spec.ts:171`.
-- Additional cross-tenant update covered in `test/integration/security.integration.spec.ts:74`.
-- Missing: invalid UUID, validation bounds (`phone/address/notes` max length), empty-body semantics, race/concurrency duplicate test.
+- Covered: success, not found, duplicate conflict (`test/integration/suppliers.integration.spec.ts`).
+- Covered separately: cross-tenant update blocked (`test/integration/security.integration.spec.ts`).
+- Missing: role 403, invalid UUID, no-op/empty payload behavior, concurrent update behavior.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Add DB-enforced unique index for supplier name per tenant (case-insensitive) and handle DB conflict mapping.
-- Wrap duplicate-check + update into a transactional/constraint-based approach.
-- Decide and enforce empty-patch behavior (reject no-op or accept explicitly).
+- Add role/validation/concurrency regression tests.
+- Catch Prisma `P2025` and map to 404 for race-safe behavior.
+- Consider optimistic concurrency (`updatedAt`/version) for admin updates.
 
 --------------------------------------------
 ## API: PATCH /api/v1/suppliers/{id}/status
 --------------------------------------------
 
 Route Entry:
-- Controller route `@Patch(':id/status')` in `src/suppliers/suppliers.controller.ts:79`.
-- Body validated by `UpdateStatusDto`.
-
+Global guards + roles + validation pipe.
 Controller:
-- `SuppliersController.updateStatus()` in `src/suppliers/suppliers.controller.ts:86`.
-
+`@Patch(':id/status')` -> `SuppliersController.updateStatus(id, dto)`.
 Service:
-- `SuppliersService.updateStatus()` in `src/suppliers/suppliers.service.ts:105`.
-
+`SuppliersService.updateStatus(id, dto)`.
 Repository:
-- Prisma `findFirst` existence check.
-- Prisma `update` status field.
-
+- `prisma.supplier.findFirst`.
+- Raw SQL payable balance check.
+- Transaction: `prisma.supplier.update` + `prisma.statusChangeLog.create`.
 DTO/Schema:
-- `UpdateStatusDto` in `src/common/dto/update-status.dto.ts:4`.
-- `status` allowlist: `ACTIVE|INACTIVE`; optional `reason` accepted.
+`UpdateStatusDto` (`status` in `ACTIVE|INACTIVE`, optional `reason`).
 
 Execution Trace:
-1. Auth + tenant checks pass.
-2. UUID and status payload validated.
-3. Service verifies tenant-scoped supplier exists.
-4. Status is updated and returned.
+1. Auth + tenant + role checks run.
+2. UUID and status body validated.
+3. Service loads supplier by `id + tenantId`.
+4. If deactivating, SQL computes net AP (`AP_INCREASE - AP_DECREASE`); positive balance blocks with 400.
+5. Transaction updates supplier status and appends audit log row.
+6. Updated supplier is returned.
 
 Business Rules Observed:
-- Status values are constrained to two states.
-- Cross-tenant status change blocked via tenant lookup.
+- Deactivation blocked when supplier has positive outstanding payable.
+- Status changes are audit-logged.
+- Update is tenant-scoped.
 
 Missing Rules:
-- `reason` is accepted but ignored (not persisted/audited).
-- No rule preventing inactivation with open payables/drafts.
-- No actor/timestamp/status-change audit trail.
+- No lock/serialization around balance-check + status update boundary.
+- No explicit guard against posting new PURCHASE from existing drafts after deactivation (cross-module gap).
+- No validation of status-transition idempotence (ACTIVE->ACTIVE still logs change).
 
 Security Risks:
-- Tenant boundary respected.
+- No direct test proving role-based 403 for this endpoint.
 
 Financial Risks:
-- Inactivating active counterparties without open-balance checks can create operational posting failures later.
+- High: deactivation safeguard can be bypassed operationally because purchase posting path does not revalidate supplier active status, allowing AP creation after deactivation from older drafts.
+- Audit log can record stale `previousStatus` under concurrent updates.
 
 Edge Case Failures:
-- Re-applying same status still writes row (idempotent effect but unnecessary write).
+- Missing test for "cannot deactivate with outstanding AP".
+- Potential log noise/inconsistency on repeated same-status requests.
 
 Concurrency Risks:
-- Last-write-wins on concurrent status changes; no optimistic locking/versioning.
+- TOCTOU between payable check and update.
+- Concurrent status changes can produce inaccurate audit trail.
 
 Test Coverage:
-- Covered: valid update, invalid status in `test/integration/suppliers.integration.spec.ts:205`.
-- Cross-tenant blocked in `test/integration/security.integration.spec.ts:87`.
-- Missing: not-found case, ignored `reason` assertion, no-auth, invalid UUID.
+- Covered: happy path and invalid status (`test/integration/suppliers.integration.spec.ts`), cross-tenant block (`test/integration/security.integration.spec.ts`).
+- Missing: outstanding-payable rejection, role 403, status log integrity, concurrent status updates.
 
 Verdict:
-⚠ Risky
+❌ Unsafe
 
 Required Fixes:
-- Persist status-change reason/audit metadata or remove `reason` from API contract.
-- Add business rule checks for inactivation when unsettled obligations exist (if required by policy).
-- Add missing negative-path tests.
+- Revalidate supplier `ACTIVE` at PURCHASE posting time (draft->post) to close deactivation bypass.
+- Perform deactivation check and status update in a serializable transaction or lock supplier row.
+- Add integration tests for outstanding-AP block and role 403.
+- Add assertions/tests for `status_change_logs` correctness.
 
 --------------------------------------------
 ## API: POST /api/v1/suppliers
 --------------------------------------------
 
 Route Entry:
-- Controller route `@Post()` in `src/suppliers/suppliers.controller.ts:32`.
-- Auth/tenant middleware/guards apply globally.
-
+Global guards + roles + validation pipe.
 Controller:
-- `SuppliersController.create()` in `src/suppliers/suppliers.controller.ts:38`.
-
+`@Post()` -> `SuppliersController.create(dto)`.
 Service:
-- `SuppliersService.create()` in `src/suppliers/suppliers.service.ts:19`.
-
+`SuppliersService.create(dto)`.
 Repository:
-- Prisma duplicate check via `findFirst`.
-- Prisma insert via `supplier.create`.
-
+`prisma.supplier.create({ data: { tenantId, createdBy, ...dto } })`.
 DTO/Schema:
-- `CreateSupplierDto` in `src/suppliers/dto/create-supplier.dto.ts:5`.
-- Name: trimmed + required + length 2..200.
-- `phone/address/notes` optional with max lengths.
+`CreateSupplierDto`; supplier uniqueness relies on DB unique functional index migration.
 
 Execution Trace:
-1. Auth and tenant guards enforce authenticated tenant context.
-2. Body is transformed and validated.
-3. Service checks tenant exists in context and reads `createdBy` from context.
-4. Case-insensitive duplicate name check is executed per tenant.
-5. Supplier row is inserted and returned with `_computed` placeholders.
+1. Auth, tenant, and role checks execute.
+2. Body validated (`name` required, trimmed, length constraints; optional fields validated).
+3. Service reads tenant/user context.
+4. Prisma create inserts supplier row (status defaults to ACTIVE at DB model).
+5. `P2002` conflicts map to 409.
 
 Business Rules Observed:
-- Tenant-scoped supplier creation.
-- Application-level duplicate-name prevention (case-insensitive check).
+- Only `OWNER/ADMIN` can create suppliers.
+- Tenant scoping and audit `createdBy` are populated from context.
+- Duplicate names are blocked by DB uniqueness path.
 
 Missing Rules:
-- No DB-level uniqueness guarantee for supplier names.
-- No status initialization flexibility beyond default `ACTIVE`.
-- API docs annotate 200 in Swagger, but endpoint actually returns 201.
+- No explicit idempotency handling on create endpoint.
+- No field normalization for `phone/address/notes` (trim/sanitization policy not enforced).
 
 Security Risks:
-- Auth required by global guard.
-- No injection vector in ORM calls.
+- Role check exists but no explicit 403 integration test for this endpoint.
 
 Financial Risks:
-- Duplicate suppliers can be created under concurrent requests, fragmenting AP ledger linkage and reports.
-- Placeholder `_computed` values in create response can be mistaken as real calculations.
+- Indirect: duplicate/dirty master records can impact downstream postings and reporting.
+- Constraint dependence risk: functional unique index exists in SQL migration but is not represented in Prisma schema model.
 
 Edge Case Failures:
-- Optional text fields are not trimmed/normalized, allowing semantically duplicated content with spacing variants.
+- If deployments skip the uniqueness migration, duplicate names can slip through (service has no pre-check fallback).
 
 Concurrency Risks:
-- High: duplicate-check + insert race (TOCTOU) because no unique DB constraint on supplier name per tenant.
+- Concurrent duplicate creates are safely collapsed by DB unique index (`201 + 409` observed in tests).
 
 Test Coverage:
-- Covered: success, duplicate rejection, name validation, auth required in `test/integration/suppliers.integration.spec.ts:40`.
-- Missing: race/concurrency test for duplicate creation, max-length boundary tests, whitespace normalization tests.
+- Covered: create success, duplicate (case-insensitive), validation errors, unauthenticated request, concurrent duplicate handling (`test/integration/suppliers.integration.spec.ts`).
+- Missing: role 403, max-length boundary tests, migration-missing behavior.
 
 Verdict:
-❌ Unsafe
+⚠ Risky
 
 Required Fixes:
-- Add DB constraint/index for case-insensitive unique supplier name per tenant.
-- Replace pre-check-only logic with constraint-first insert and conflict handling.
-- Align Swagger response code annotation with actual 201 status.
-
+- Add role-based 403 tests for non-admin roles.
+- Reflect functional uniqueness in Prisma schema strategy/documentation to prevent drift.
+- Decide and enforce idempotency policy for master-data create endpoints.

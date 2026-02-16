@@ -1,391 +1,383 @@
 # PHASE TRACE REPORT
 
 Title:
-Phase 6 - Products
+Phase 6 — Products
 
 --------------------------------------------
 ## API: GET /api/v1/products
 --------------------------------------------
 
 Route Entry:
-`main.ts` sets global prefix `/api/v1` -> `AppModule` registers global middleware/guards -> `ProductsController.findAll()`.
+- `main.ts` global prefix `api/v1` + `ProductsController.findAll()` route `@Get()` (`src/main.ts:27`, `src/products/products.controller.ts:44`)
+- Middleware/guards on path: `RequestContextMiddleware` -> `TenantContextMiddleware` -> `JwtAuthGuard` -> `TenantScopeGuard` -> `RolesGuard` (`src/app.module.ts:47-79`)
 
 Controller:
-`src/products/products.controller.ts` -> `findAll(@Query() query: ListProductsQueryDto)`.
+- `ProductsController.findAll(@Query() query: ListProductsQueryDto)` (`src/products/products.controller.ts:53`)
 
 Service:
-`src/products/products.service.ts` -> `findAll(query)`.
+- `ProductsService.findAll(query)` (`src/products/products.service.ts:37`)
 
 Repository:
-`PrismaService.product.findMany()` and `PrismaService.product.count()`.
+- `prisma.product.findMany({ where, skip, take, orderBy })`
+- `prisma.product.count({ where })` (`src/products/products.service.ts:62-70`)
 
 DTO/Schema:
-`ListProductsQueryDto`, `PaginationQueryDto`, `Product` model (`prisma/schema.prisma`).
+- `ListProductsQueryDto` + `PaginationQueryDto` validation (`src/products/dto/list-products-query.dto.ts:5-19`, `src/common/dto/pagination-query.dto.ts`)
+- Product schema/indexes (`prisma/schema.prisma` model `Product`, index `@@index([tenantId, name])`)
 
 Execution Trace:
-1. Request enters `RequestContextMiddleware` and gets/creates `x-request-id`.
-2. `TenantContextMiddleware` parses bearer token and preloads async context if token is valid.
-3. `JwtAuthGuard` authenticates JWT; `TenantScopeGuard` enforces `user.tenantId` and writes tenant/user into request context.
-4. Global `ValidationPipe` validates/transforms query (`page`, `limit`, `search`, `status`, `category`), strips unknown fields.
-5. Controller calls service `findAll`.
-6. Service reads `tenantId` from context; throws `UnauthorizedException` if missing.
-7. Service builds `where` with tenant filter and optional status/category/search filters.
-8. Service executes parallel Prisma queries for paged rows and total count.
-9. Service maps every row through `withComputed()` and returns paginated response.
-10. `HttpExceptionFilter` shapes any error response; success passes through unchanged.
+1. Request enters `/api/v1/products`; JWT is required by global `JwtAuthGuard`.
+2. `TenantScopeGuard` extracts `tenantId/userId/role` into async request context.
+3. Validation pipe transforms query into DTO, enforcing `page`, `limit`, and `status in {ACTIVE, INACTIVE, ALL}`.
+4. Service builds tenant-scoped Prisma `where` filter (optional `status`, `category`, `search` OR across name/sku/category).
+5. Service runs `findMany` and `count` concurrently, then returns `{ data, meta }` via `paginateResponse`.
 
 Business Rules Observed:
-- Tenant filter is mandatory in query.
-- Default status filter is `ACTIVE` unless `status=ALL`.
-- Query limit max enforced at 100 via DTO inheritance.
+- Tenant isolation is enforced at query level (`where: { tenantId }`).
+- Default list scope is `status=ACTIVE`.
+- Category and text search are case-insensitive.
 
 Missing Rules:
-- `_computed` fields are placeholders (`currentStock`, totals, dates all fake defaults), not derived truth.
-- No explicit max length guard for `search`/`category` query payloads.
-- No deterministic secondary sort key when names are equal.
+- No `sortBy/sortOrder` controls despite being expected in implementation plan.
+- No `inStock` filter.
+- No explicit upper bound on `search` length.
 
 Security Risks:
-- No direct injection risk found; Prisma query builder and validated inputs are used.
-- Authorization is coarse-grained: any authenticated tenant user can list products.
+- JWT validation trusts token payload without re-checking user/tenant status in DB (`src/auth/strategies/jwt.strategy.ts:23-25`). Suspended users with unexpired tokens retain access.
 
 Financial Risks:
-- Response includes fabricated `_computed` stock/purchase/sale metrics, which can mislead financial UI decisions.
+- Low direct financial risk (read-only endpoint).
 
 Edge Case Failures:
-- Inactive products are hidden by default unless client knows to set `status=ALL`.
-- Empty result pages for out-of-range `page` values are not explicitly flagged.
+- Pagination ordering only by `name`; equal-name rows can produce unstable page boundaries.
 
 Concurrency Risks:
-- Read is non-transactional snapshot; concurrent writes may change page/count between calls.
+- `count` and `findMany` are not wrapped in a repeatable-read snapshot; metadata can drift under concurrent writes.
 
 Test Coverage:
-- Covered in `test/integration/products.integration.spec.ts`: pagination, category filter, search, tenant isolation.
-- Missing: explicit `status=ACTIVE/INACTIVE/ALL` behavior tests, invalid query parameter tests, unauthorized list test in this suite.
+- Covered: base listing, category filter, search, tenant isolation (`test/integration/products.integration.spec.ts:96-141`).
+- Missing: status filter permutations (`ACTIVE/INACTIVE/ALL`), invalid status, pagination boundary tests, unauthenticated GET test.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Replace placeholder `_computed` with real derived values or remove from response.
-- Add tests for status filters and query validation boundaries.
-- Add explicit stable ordering (`name`, then `id`) for deterministic pagination.
+- Add DB-backed user/tenant active-state check in auth/guard flow.
+- Add deterministic secondary ordering (e.g., `name`, then `id`).
+- Add tests for status filters, pagination boundaries, and unauthenticated access.
 
 --------------------------------------------
 ## API: GET /api/v1/products/{id}
 --------------------------------------------
 
 Route Entry:
-`/api/v1/products/:id` -> `ProductsController.findOne()`.
+- `ProductsController.findOne(@Param('id', ParseUUIDPipe) id)` route `@Get(':id')` (`src/products/products.controller.ts:57-66`)
+- Same global middleware/guards chain from `AppModule`.
 
 Controller:
-`src/products/products.controller.ts` -> `findOne(@Param('id', ParseUUIDPipe) id: string)`.
+- `ProductsController.findOne()` (`src/products/products.controller.ts:64`)
 
 Service:
-`src/products/products.service.ts` -> `findOne(id)`.
+- `ProductsService.findOne(id)` (`src/products/products.service.ts:75`)
 
 Repository:
-`PrismaService.product.findFirst({ where: { id, tenantId } })`.
+- `prisma.product.findFirst({ where: { id, tenantId } })` (`src/products/products.service.ts:79-81`)
 
 DTO/Schema:
-`ParseUUIDPipe`, `Product` model.
+- Path param validated with `ParseUUIDPipe`.
+- Product table primary key `id`, tenant column `tenant_id`.
 
 Execution Trace:
-1. Request passes request-context middleware, tenant-context middleware, JWT guard, tenant guard.
-2. `ParseUUIDPipe` rejects malformed UUID before service.
-3. Controller calls service.
-4. Service enforces tenant context presence.
-5. Service runs tenant-scoped lookup by `id`.
-6. If missing, throws `NotFoundException('Product not found')`.
-7. Service returns entity plus `withComputed()` placeholder object.
-8. Response returns raw object; exceptions are normalized by global filter.
+1. Request authenticated and tenant context injected by guards.
+2. `ParseUUIDPipe` validates `id` format.
+3. Service reads tenant-scoped product by `(id, tenantId)` using `findFirst`.
+4. Missing record returns `NotFoundException('Product not found')`; otherwise returns row.
 
 Business Rules Observed:
-- Cross-tenant access returns 404 because query includes `tenantId`.
-- Invalid UUID input is rejected at route layer.
+- Cross-tenant reads are blocked by tenant-scoped query.
 
 Missing Rules:
-- `_computed` fields are static placeholders, not truth.
-- No visibility rule to hide inactive products from detail endpoint.
+- No status-based visibility rule (inactive products are still readable).
 
 Security Risks:
-- UUID probing still leaks existence timing only as generic 404; tenant data remains isolated.
+- Same token trust risk (no DB revalidation of user/tenant status).
 
 Financial Risks:
-- Consumer can read inaccurate `_computed` stock/totals and treat them as factual.
+- Low direct financial risk (read-only master-data endpoint).
 
 Edge Case Failures:
-- None critical in route/service path beyond placeholder metric issue.
+- None severe beyond global auth/token-state issue.
 
 Concurrency Risks:
-- Read may race with updates; no snapshot pinning beyond DB default.
+- Minimal (single read).
 
 Test Coverage:
-- Covered in `test/integration/products.integration.spec.ts`: success path and cross-tenant 404.
-- Missing: invalid UUID 400 test, unauthorized 401 test, inactive-product retrieval behavior test.
+- Covered: success path and cross-tenant 404 (`test/integration/products.integration.spec.ts:144-165`, `test/integration/security.integration.spec.ts:142-150`).
+- Missing: unauthenticated test and invalid UUID test.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Remove or correctly compute `_computed` fields on detail response.
-- Add explicit tests for invalid UUID and unauthenticated access.
+- Add auth-state revalidation for inactive users/tenants.
+- Add integration tests for invalid UUID and unauthenticated access.
 
 --------------------------------------------
 ## API: GET /api/v1/products/{id}/stock
 --------------------------------------------
 
 Route Entry:
-`/api/v1/products/:id/stock` -> `ProductsController.getStock()`.
+- `ProductsController.getStock(@Param('id', ParseUUIDPipe) id)` route `@Get(':id/stock')` (`src/products/products.controller.ts:93-102`)
+- Same global middleware/guards chain.
 
 Controller:
-`src/products/products.controller.ts` -> `getStock(@Param('id', ParseUUIDPipe) id: string)`.
+- `ProductsController.getStock()` (`src/products/products.controller.ts:100`)
 
 Service:
-`src/products/products.service.ts` -> `getStock(id)`.
+- `ProductsService.getStock(id)` (`src/products/products.service.ts:150`)
 
 Repository:
-- `PrismaService.product.findFirst({ where: { id, tenantId } })`.
-- `PrismaService.$queryRaw` against `inventory_movements`.
+- `prisma.product.findFirst({ where: { id, tenantId } })`
+- Raw SQL aggregate on `inventory_movements` via `$queryRaw` (`src/products/products.service.ts:154-166`)
 
 DTO/Schema:
-`ParseUUIDPipe`, `ProductStockResponseDto`, `InventoryMovement` model and `MovementType` enum.
+- `ParseUUIDPipe` for `id`.
+- Stock derived from `inventory_movements` (`MovementType` enum) and product `avg_cost` (`prisma/schema.prisma` Product + InventoryMovement).
 
 Execution Trace:
-1. Request passes middleware and global guards identical to other protected routes.
-2. UUID param is validated by `ParseUUIDPipe`.
-3. Service verifies tenant context.
-4. Service checks product existence within tenant.
-5. Service executes raw SQL:
-   `SUM(CASE WHEN movement_type IN ('PURCHASE_IN','CUSTOMER_RETURN_IN','ADJUSTMENT_IN') THEN quantity ELSE -quantity END)`.
-6. Service converts SQL `bigint` stock to JS `number`.
-7. Service returns `{ productId, productName, currentStock, avgCost }`, where `avgCost` is cached from `products.avg_cost`.
+1. Guards authenticate and attach tenant context.
+2. UUID path param is validated.
+3. Service verifies product existence for tenant.
+4. Service computes current stock from `inventory_movements` with signed CASE expression.
+5. `safeMoney` converts bigint aggregate to JS number with precision guard.
+6. Response returns `{ productId, productName, currentStock, avgCost }`.
 
 Business Rules Observed:
-- Stock is derived from entry table (`inventory_movements`), not stored directly.
-- Tenant isolation is enforced in both existence check and stock query.
+- Stock is derived from append-only movement table, not stored as mutable balance.
+- Tenant-scoped stock query.
 
 Missing Rules:
-- No protection against numeric overflow when converting `bigint` stock to JS `number`.
-- No explicit filter on transaction status in query (relies on upstream invariant that only posted transactions create movements).
-- Endpoint returns only current stock, no as-of date support.
+- No `asOfDate` filter support (current stock only).
+- No explicit handling for newly introduced movement types; CASE defaults unknown types to negative branch.
 
 Security Risks:
-- Raw SQL uses parameterized tagged template; no SQL injection path found.
+- Same token trust risk (inactive/suspended users with valid JWT can read stock).
 
 Financial Risks:
-- Potential precision loss for large stock values due `bigint` -> `number` conversion.
-- Returned `avgCost` depends on upstream posting correctness; if posting invariants fail, this API surfaces corrupted valuation.
-- Posting rules in docs require stock checks before `SUPPLIER_RETURN_OUT` and `ADJUSTMENT_OUT`; posting implementation currently has gaps, so this endpoint can expose negative stock states.
+- Stock correctness depends on CASE mapping staying in sync with `MovementType`; future enum additions can silently misstate stock.
+- DB schema lacks composite tenant+entity FKs (defense-in-depth gap noted in tenant-isolation tests), so direct DB writes can poison stock aggregates.
 
 Edge Case Failures:
-- Extremely large movement volume can overflow JS safe integer and silently misreport stock.
+- If stock aggregate exceeds safe JS integer range, endpoint throws 500 (`safeMoney`), no graceful domain error.
 
 Concurrency Risks:
-- Read can observe rapidly changing stock during concurrent postings; no read-level locking.
+- Product existence check and stock aggregate are separate reads; concurrent posting can produce transient read skew.
 
 Test Coverage:
-- Covered in `test/integration/balance-queries.integration.spec.ts`: zero stock, purchase increase, sale decrease, 404 unknown, cross-tenant 404.
-- Missing: invalid UUID 400 test, unauthorized 401 test, supplier-return/adjustment movement scenarios, large-number behavior.
+- Covered: zero/new product, purchase effect, sale effect, unknown product 404, tenant isolation (`test/integration/balance-queries.integration.spec.ts:50-131`).
+- Missing: invalid UUID, unauthenticated access, movement-type completeness, overflow behavior.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Return stock as string for bigint safety or enforce bounded stock values.
-- Add status-aware query guard or assert posted-only movement invariant defensively.
-- Add movement-type regression tests including returns and adjustments.
+- Add regression tests tying every `MovementType` to stock sign behavior.
+- Add optional `asOfDate` support or document current-only semantics explicitly in API contract.
+- Add auth-state revalidation and invalid UUID/unauthenticated tests.
 
 --------------------------------------------
 ## API: PATCH /api/v1/products/{id}
 --------------------------------------------
 
 Route Entry:
-`/api/v1/products/:id` -> `ProductsController.update()`.
+- `ProductsController.update(@Param('id', ParseUUIDPipe) id, @Body() dto)` route `@Patch(':id')` (`src/products/products.controller.ts:68-79`)
+- Protected by `@Roles('OWNER', 'ADMIN')` + global guards.
 
 Controller:
-`src/products/products.controller.ts` -> `update(@Param('id', ParseUUIDPipe) id, @Body() dto: UpdateProductDto)`.
+- `ProductsController.update()` (`src/products/products.controller.ts:77`)
 
 Service:
-`src/products/products.service.ts` -> `update(id, dto)`.
+- `ProductsService.update(id, dto)` (`src/products/products.service.ts:87`)
 
 Repository:
-- `PrismaService.product.findFirst({ where: { id, tenantId } })`.
-- `PrismaService.product.update({ where: { id, tenantId }, data: dto })`.
+- `prisma.product.findFirst({ where: { id, tenantId } })`
+- `prisma.product.update({ where: { id, tenantId }, data: dto })` (`src/products/products.service.ts:91-100`)
 
 DTO/Schema:
-`UpdateProductDto`, `ParseUUIDPipe`, `Product` model unique key `(tenant_id, sku)`.
+- `UpdateProductDto` (`name/sku/category/unit` optional) (`src/products/dto/update-product.dto.ts:5-35`)
+- Global validation pipe `whitelist + forbidNonWhitelisted`.
 
 Execution Trace:
-1. Request passes middleware/guards and UUID validation.
-2. Body is validated by global pipe with whitelist/forbidNonWhitelisted.
-3. Controller calls service with `id` and DTO.
-4. Service enforces tenant context.
-5. Service pre-checks existence with tenant-scoped `findFirst`.
-6. Service applies Prisma `update` using tenant-constrained unique filter and DTO data.
-7. `P2002` unique violation maps to HTTP 409 SKU conflict.
-8. Service returns updated product with placeholder `_computed`.
+1. Guards enforce JWT + tenant scope + role (`OWNER/ADMIN`).
+2. UUID path validation and DTO validation run.
+3. Service checks existence under `(id, tenantId)`.
+4. Service writes partial update through Prisma; maps `P2002` to 409 for SKU conflicts.
+5. Returns updated product row.
 
 Business Rules Observed:
-- Tenant-scoped update only.
-- `avgCost` cannot be patched because DTO excludes it and whitelist rejects unknown fields.
-- Duplicate `(tenantId, sku)` blocked by DB unique constraint.
+- `avgCost` cannot be patched through DTO whitelist.
+- Tenant isolation and role restriction enforced.
+- SKU collision returns 409.
 
 Missing Rules:
-- No optimistic concurrency/version check (last-write-wins).
-- Empty PATCH payload is allowed (no-op update).
-- Input normalization gaps: whitespace-only names pass; empty SKU string is allowed by regex (`*`) and optional semantics.
-- No explicit audit reason for master-data changes.
+- No rule preventing SKU mutation after transaction history exists (implementation plan expected this).
+- No change-audit log for master-data edits.
+- No optimistic concurrency control/version check.
 
 Security Risks:
-- Any authenticated tenant user can mutate product master data; no role-based restriction.
+- Token payload is trusted without checking current user/tenant status in DB.
+- Role protection is present, but no endpoint-specific integration tests prove 403 behavior.
 
 Financial Risks:
-- Product identity fields can change without versioning, impacting historical readability/audit trails.
-- Empty-string SKU behavior can create avoidable uniqueness conflicts and catalog quality issues.
+- SKU changes on transacted products can break external reconciliation/audit mapping workflows.
 
 Edge Case Failures:
-- PATCH with `{}` succeeds unexpectedly as silent no-op.
-- SKU with accidental empty string can behave differently from null SKU.
+- `name: null` passes `@IsOptional()` and reaches DB where `name` is non-nullable, causing unhandled Prisma error -> 500 instead of 400.
+- Race between pre-check and update can surface `P2025` and bubble as 500.
 
 Concurrency Risks:
-- TOCTOU pattern (`findFirst` then `update`) and no compare-and-set semantics can cause lost updates.
+- Lost-update risk: concurrent PATCH requests overwrite each other (last write wins).
 
 Test Coverage:
-- Covered in `test/integration/products.integration.spec.ts`: field updates, avgCost immutability.
-- Covered in `test/integration/security.integration.spec.ts`: cross-tenant update blocked.
-- Missing: duplicate SKU integration conflict test for PATCH, whitespace/empty SKU validation tests, no-op PATCH semantics test, concurrent update test.
+- Covered: happy path update, forbidden `avgCost` field, cross-tenant 404 (`test/integration/products.integration.spec.ts:168-191`, `test/integration/security.integration.spec.ts:152-163`).
+- Missing: duplicate SKU on update, null-name 500 regression, role 403, unauthenticated access, SKU-with-history rejection.
 
 Verdict:
-⚠ Risky
+❌ Unsafe
 
 Required Fixes:
-- Enforce at least one mutable field in PATCH body.
-- Trim and normalize string inputs; reject blank `name` and blank `sku`.
-- Add optimistic locking (`updatedAt` precondition or version column) for write safety.
-- Add role policy for who can mutate product master data.
+- Reject `null` explicitly for `name` (and other non-null fields) at DTO layer.
+- Add business rule: block SKU change if product has transaction history.
+- Add optimistic concurrency strategy (version or `updatedAt` precondition).
+- Add full authorization and negative-path integration tests.
 
 --------------------------------------------
 ## API: PATCH /api/v1/products/{id}/status
 --------------------------------------------
 
 Route Entry:
-`/api/v1/products/:id/status` -> `ProductsController.updateStatus()`.
+- `ProductsController.updateStatus(@Param('id', ParseUUIDPipe) id, @Body() dto)` route `@Patch(':id/status')` (`src/products/products.controller.ts:81-91`)
+- Protected by `@Roles('OWNER', 'ADMIN')` + global guards.
 
 Controller:
-`src/products/products.controller.ts` -> `updateStatus(@Param('id', ParseUUIDPipe) id, @Body() dto: UpdateStatusDto)`.
+- `ProductsController.updateStatus()` (`src/products/products.controller.ts:89`)
 
 Service:
-`src/products/products.service.ts` -> `updateStatus(id, dto)`.
+- `ProductsService.updateStatus(id, dto)` (`src/products/products.service.ts:108`)
 
 Repository:
-- `PrismaService.product.findFirst({ where: { id, tenantId } })`.
-- `PrismaService.product.update({ where: { id, tenantId }, data: { status: dto.status } })`.
+- `prisma.product.findFirst({ where: { id, tenantId } })`
+- `$queryRaw` stock aggregate from `inventory_movements` for deactivation guard
+- `$transaction([product.update, statusChangeLog.create])` (`src/products/products.service.ts:112-145`)
 
 DTO/Schema:
-`UpdateStatusDto`, `ParseUUIDPipe`, `Product.status`.
+- `UpdateStatusDto` (`status in ACTIVE/INACTIVE`, optional `reason`) (`src/common/dto/update-status.dto.ts:4-12`)
+- `status_change_logs` table (`prisma/schema.prisma` model `StatusChangeLog`).
 
 Execution Trace:
-1. Request passes middleware/guards, UUID validation, and DTO status enum validation.
-2. Service enforces tenant context.
-3. Service verifies product exists in tenant scope.
-4. Service updates status only (`ACTIVE` or `INACTIVE`).
-5. Service returns updated product plus placeholder `_computed`.
+1. Guards enforce authentication, tenant context, and owner/admin role.
+2. Path UUID and body status enum validated.
+3. Service checks product exists in tenant.
+4. If target status is `INACTIVE`, service computes current stock and blocks if `stock > 0`.
+5. Service executes transaction to update product status and append status-change log.
+6. Returns updated product.
 
 Business Rules Observed:
-- Status values constrained to `ACTIVE`/`INACTIVE`.
-- Cross-tenant status mutation blocked via tenant filter.
+- Deactivation is blocked when current stock is positive.
+- Status change is auditable via append-only `status_change_logs` insert.
 
 Missing Rules:
-- `reason` field in `UpdateStatusDto` is accepted but ignored/persisted nowhere.
-- No rule preventing deactivation when product has positive stock or active operational dependency.
-- No role-based control for status changes.
+- `reason` is optional even for deactivation (policy/audit weakness).
+- No idempotent no-op handling when status is unchanged.
+- No DB foreign keys on `status_change_logs` to tenant/user/product entities for integrity hardening.
 
 Security Risks:
-- Broad mutation permission for all authenticated tenant users.
+- Global token trust issue (no live user/tenant status revalidation).
+- No explicit role/403 integration tests for this endpoint.
 
 Financial Risks:
-- Product can be inactivated without stock/disposition validation, creating operational and reconciliation risk.
+- Deactivation guard is vulnerable to race: stock is checked before status update without locking; concurrent inbound movement can violate intended invariant.
 
 Edge Case Failures:
-- No explicit behavior for idempotent repeat status updates (works implicitly but untested).
+- Pre-check/update race can surface unhandled Prisma errors (e.g., record changed between reads) -> 500.
 
 Concurrency Risks:
-- Last-write-wins status races; no optimistic locking.
+- TOCTOU race between stock read and status write.
+- No lock on `inventory_movements`/`product` during deactivation check.
 
 Test Coverage:
-- Covered in `test/integration/products.integration.spec.ts`: happy path status update.
-- Covered in `test/integration/security.integration.spec.ts`: cross-tenant status change blocked.
-- Missing: invalid status payload test, ignored `reason` behavior test, stock-dependent deactivation rule tests, concurrent status update test.
+- Covered: happy-path status update, cross-tenant 404 (`test/integration/products.integration.spec.ts:194-205`, `test/integration/security.integration.spec.ts:165-176`).
+- Missing: positive-stock deactivation rejection, status log persistence assertions, same-status idempotency, role 403, unauthenticated access.
 
 Verdict:
-⚠ Risky
+❌ Unsafe
 
 Required Fixes:
-- Persist status change reason in audit log or remove it from DTO.
-- Add business rule checks before inactivation (for example, block when stock > 0 unless explicit override).
-- Restrict status changes to privileged roles.
+- Perform stock check and status update in a serialized transaction with explicit lock strategy.
+- Make deactivation reason mandatory (or enforce policy-level equivalent).
+- Add DB-level FKs for `status_change_logs` where feasible.
+- Add concurrency and audit-log integration tests.
 
 --------------------------------------------
 ## API: POST /api/v1/products
 --------------------------------------------
 
 Route Entry:
-`/api/v1/products` -> `ProductsController.create()`.
+- `ProductsController.create(@Body() dto)` route `@Post()` (`src/products/products.controller.ts:33-42`)
+- Protected by `@Roles('OWNER', 'ADMIN')` + global guards.
 
 Controller:
-`src/products/products.controller.ts` -> `create(@Body() dto: CreateProductDto)`.
+- `ProductsController.create()` (`src/products/products.controller.ts:40`)
 
 Service:
-`src/products/products.service.ts` -> `create(dto)`.
+- `ProductsService.create(dto)` (`src/products/products.service.ts:21`)
 
 Repository:
-`PrismaService.product.create({ data: { tenantId, createdBy, ...dto } })`.
+- `prisma.product.create({ data: { tenantId, createdBy, ...dto } })` (`src/products/products.service.ts:27-29`)
 
 DTO/Schema:
-`CreateProductDto`, `Product` model unique `(tenant_id, sku)`.
+- `CreateProductDto` with SKU uppercase transform + regex (`src/products/dto/create-product.dto.ts:5-35`)
+- DB uniqueness: `products_tenant_id_sku_key` + `products_tenant_sku_ci_unique` functional index (`prisma/migrations/20260215100000_add_uniqueness_indexes/migration.sql`).
 
 Execution Trace:
-1. Request passes middleware/guards and validation pipe.
-2. DTO validation enforces `name` length and SKU pattern; `sku` is uppercased by transformer.
-3. Service enforces tenant context and reads `createdBy`.
-4. Service writes new row with tenant/user attribution.
-5. Prisma unique conflict (`P2002`) is translated to 409 SKU conflict.
-6. Service returns created entity with placeholder `_computed`.
+1. Guards enforce JWT, tenant scope, and owner/admin role.
+2. Validation pipe enforces DTO constraints and strips unknown fields.
+3. Service requires `tenantId` from request context.
+4. Service writes new product row with tenant/user linkage.
+5. Prisma unique violation `P2002` is mapped to HTTP 409.
+6. Created row is returned.
 
 Business Rules Observed:
-- Tenant scoping on creation is enforced from auth context.
-- SKU uniqueness is enforced per tenant at DB level.
-- Monetary field `avgCost` is not client-settable in create DTO.
+- SKU canonicalization to uppercase at DTO layer.
+- Tenant-scoped product creation.
+- Duplicate SKU conflict handling via DB uniqueness.
 
 Missing Rules:
-- No idempotency key handling for create; retries can create duplicate products when SKU is omitted.
-- `name` is not trimmed; whitespace-only names can pass length/non-empty checks.
-- `sku` allows empty string due regex and optional semantics.
-- No role-based restriction for creating products.
+- No idempotency key support for create retries.
+- No trim/normalization for `name/category/unit`.
+- No explicit rejection of empty-string SKU (`""` passes regex and can create surprising uniqueness behavior).
 
 Security Risks:
-- Authenticated user in tenant can create master data without role gate.
+- JWT payload is trusted without checking current DB user/tenant state.
 
 Financial Risks:
-- Non-idempotent create can duplicate catalog items under retry/network failures, fragmenting stock/cost flows across near-identical products.
-- Weak normalization (blank-like names/SKU edge cases) increases master-data corruption risk with downstream accounting impact.
+- Low direct financial impact; endpoint creates master data only.
 
 Edge Case Failures:
-- Empty string SKU accepted; behaves differently than null and can trigger avoidable uniqueness collisions.
-- Replayed request without SKU can create multiple logical duplicates.
+- Empty string SKU accepted due regex `*` and optional semantics.
+- Swagger contract drift: decorator uses `@ApiOkResponse` while real status is 201.
 
 Concurrency Risks:
-- Concurrent same-SKU creates rely on DB unique constraint; one fails (good), but client retry semantics remain non-idempotent without request keying.
+- Duplicate creates are only controlled by DB uniqueness; non-SKU duplicates can be created by retried requests.
 
 Test Coverage:
-- Covered in `test/integration/products.integration.spec.ts`: create without SKU, uppercase SKU transform, duplicate SKU 409, invalid SKU 400, missing name 400, unauthenticated 401.
-- Missing: whitespace-name rejection test, empty-string SKU rejection test, idempotent retry behavior test, role-based authorization test.
+- Covered: no-SKU create, SKU uppercase, duplicate SKU 409, invalid SKU, missing name, unauthenticated, case-insensitive duplicate (`test/integration/products.integration.spec.ts:40-93`, `:210-224`).
+- Missing: role 403, empty-string SKU behavior, null/blank normalization cases, idempotent retry behavior.
 
 Verdict:
-❌ Unsafe
+⚠ Risky
 
 Required Fixes:
-- Implement idempotency for create (header key persisted per tenant+route+payload hash) or enforce client-provided deterministic natural key.
-- Normalize and trim `name`/`sku`; reject blank values.
-- Add role-based access control for product creation.
-- Add regression tests for retry duplication and blank-input cases.
+- Add explicit `@IsNotEmpty()` for optional string fields when present (especially SKU).
+- Add role/403 tests and edge-case tests for empty/blank payload values.
+- Align Swagger response code annotations with actual HTTP status.

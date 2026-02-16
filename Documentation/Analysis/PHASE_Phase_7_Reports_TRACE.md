@@ -3,579 +3,639 @@
 Title:
 Phase 7 — Reports
 
+--------------------------------------------
 ## API: GET /api/v1/reports/customers/{id}/balance
+--------------------------------------------
 
 Route Entry:
-`src/reports/reports.controller.ts` -> `getCustomerBalance()`
+- `GET /api/v1/reports/customers/:id/balance` (`src/reports/reports.controller.ts:43`)
 
 Controller:
-`ReportsController.getCustomerBalance(@Param('id', ParseUUIDPipe), @Query() BalanceQueryDto)`
+- `ReportsController.getCustomerBalance()` (`src/reports/reports.controller.ts:50`)
 
 Service:
-`ReportsService.getCustomerBalance(id, query)`
+- `ReportsService.getCustomerBalance()` (`src/reports/reports.service.ts:72`)
 
 Repository:
-`PrismaService.customer.findFirst()` + `PrismaService.$queryRaw()` on `ledger_entries` joined with `transactions`
+- `PrismaService.customer.findFirst(where: { id, tenantId })`
+- `PrismaService.$queryRaw(...)` on `ledger_entries` + `transactions`
 
 DTO/Schema:
-`src/reports/dto/balance-query.dto.ts` (`asOfDate?: IsDateString`)  
-`customers`, `ledger_entries`, `transactions` in `prisma/schema.prisma`
+- `BalanceQueryDto` (`src/reports/dto/balance-query.dto.ts:4`)
+- `asOfDate` regex-only validation (`YYYY-MM-DD` string)
+- `ParseUUIDPipe` on `id`
 
 Execution Trace:
-1. Request enters global middleware chain: `RequestContextMiddleware` sets `requestId`; `TenantContextMiddleware` attempts JWT decode and context seed.
-2. Global guards run: `JwtAuthGuard` authenticates JWT, `TenantScopeGuard` enforces `tenantId` presence and sets request context.
-3. Route match to `GET reports/customers/:id/balance`; `ParseUUIDPipe` validates path id.
-4. Global validation pipe validates query (`BalanceQueryDto`) and strips unknown fields.
-5. Service reads tenant from async context (`requireTenantId()`), defaults `asOfDate` via `today()` if omitted.
-6. Service loads customer with tenant-scoped lookup (`findFirst({ id, tenantId })`); missing -> `404`.
-7. Raw SQL aggregates AR ledger by entry type up to `asOfDate`, joined to `transactions` with `t.status = 'POSTED'`.
-8. Bigint aggregates are cast to JS `Number`, balance computed and returned.
+1. Global middleware sets request context and attempts token decode (`src/app.module.ts:78`, `src/common/middleware/*.ts`).
+2. `JwtAuthGuard` authenticates JWT (`src/common/guards/jwt-auth.guard.ts:7`).
+3. `TenantScopeGuard` enforces tenant in context (`src/common/guards/tenant-scope.guard.ts:23`).
+4. `RolesGuard` enforces `OWNER|ADMIN` from class-level `@Roles` (`src/reports/reports.controller.ts:22`).
+5. Validation pipe transforms query + rejects non-whitelisted fields (`src/common/pipes/validation.pipe.ts:21`).
+6. Controller forwards `id` + query to service.
+7. Service resolves `tenantId`, computes `asOfDate` from query or tenant timezone (`src/reports/reports.service.ts:73-75`, `669-673`).
+8. Service verifies customer exists within tenant (`findFirst`).
+9. Raw SQL aggregates `AR_INCREASE` and `AR_DECREASE` up to `asOfDate` with `t.status='POSTED'`.
+10. BigInt aggregates are converted via `safeMoney` and response payload is returned.
 
 Business Rules Observed:
-- Tenant isolation is explicitly enforced in entity lookup and raw SQL filters.
-- Only posted transactions are counted (`t.status = 'POSTED'`).
-- Balance classification implemented (`RECEIVABLE` / `CREDIT` / `SETTLED`).
-- Point-in-time filtering supported via `asOfDate`.
+- Tenant-scoped existence check before aggregation.
+- Only posted transactions included in balance math.
+- AR model: `balance = sales - payments - returns`.
+- Balance type derived (`RECEIVABLE|CREDIT|SETTLED`).
 
 Missing Rules:
-- No explicit date policy based on tenant timezone; default date uses server UTC.
-- No role/permission check beyond authenticated tenant membership.
-- No guardrail for extremely large aggregates before bigint->number conversion.
+- No strict calendar-date validation (regex allows invalid dates like `2026-13-40`).
+- No explicit overflow guard after arithmetic on converted JS numbers.
 
 Security Risks:
-- Any authenticated tenant user can access full financial balances; no RBAC check.
+- Low: auth/tenant/role controls are present.
+- Medium: service-layer tenant scoping is manual; no query-level auto-enforcement in Prisma layer.
 
 Financial Risks:
-- Precision loss risk from `bigint -> Number` conversion for large historical totals.
-- UTC default date can shift point-in-time snapshots around tenant day boundaries.
+- Medium: invalid but regex-matching dates can trigger DB cast/runtime failure rather than controlled 400.
+- Medium: totals can exceed JS safe integer after arithmetic even if individual aggregates pass `safeMoney`.
 
 Edge Case Failures:
-- Very large values can exceed safe integer precision silently.
-- Future-dated transactions are included if `asOfDate` omitted and UTC date rolls ahead of tenant-local day.
+- Invalid calendar dates likely surface as 500, not deterministic validation error.
+- No dedicated handling for extremely large aggregate totals.
 
 Concurrency Risks:
-- Read uses multiple statements (entity check + aggregate) without snapshot transaction; possible non-repeatable read under concurrent posting.
+- Low: single aggregate query is atomic at statement level.
+- Low: customer existence check and aggregate are separate reads; highly concurrent updates can produce slight temporal mismatch in metadata vs totals.
 
 Test Coverage:
-- Covered: zero-balance baseline, as-of filtering, breakdown correctness, unknown id `404`, cross-tenant `404`.
-- Missing: invalid query/date format `400`, unauthorized `401`, precision limits, UTC/day-boundary behavior.
+- Covered in `test/integration/reports.integration.spec.ts`:
+- `asOfDate` filtering (`line 166`)
+- breakdown composition (`line 200`)
+- unknown customer 404 (`line 245`)
+- cross-tenant 404 (`line 252`)
+- asOfDate format validation (`line 840+` shared wave tests)
+- Missing tests: unauthorized (401), forbidden role (403), invalid calendar date, numeric overflow.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Keep monetary aggregates as `bigint`/string in API or enforce safe-range checks before `Number`.
-- Derive default business date using tenant timezone, not server UTC.
-- Add RBAC enforcement for report visibility.
-- Add validation/auth/timezone precision tests.
+- Add strict date parsing validation (calendar-valid ISO date) in DTO.
+- Add overflow-safe arithmetic wrapper for post-conversion additions/subtractions.
+- Add authz negative-path tests (401/403).
 
+--------------------------------------------
 ## API: GET /api/v1/reports/customers/{id}/statement
+--------------------------------------------
 
 Route Entry:
-`src/reports/reports.controller.ts` -> `getCustomerStatement()`
+- `GET /api/v1/reports/customers/:id/statement` (`src/reports/reports.controller.ts:126`)
 
 Controller:
-`ReportsController.getCustomerStatement(@Param('id', ParseUUIDPipe), @Query() StatementQueryDto)`
+- `ReportsController.getCustomerStatement()` (`src/reports/reports.controller.ts:134`)
 
 Service:
-`ReportsService.getCustomerStatement(id, query)`
+- `ReportsService.getCustomerStatement()` (`src/reports/reports.service.ts:546`)
 
 Repository:
-`PrismaService.customer.findFirst()` + two `PrismaService.$queryRaw()` queries on `ledger_entries` + `transactions`
+- `PrismaService.customer.findFirst(...)`
+- `PrismaService.$transaction(... RepeatableRead ...)` with two raw queries:
+- opening balance query on `ledger_entries + transactions`
+- in-range entries query on `ledger_entries + transactions`
 
 DTO/Schema:
-`src/reports/dto/statement-query.dto.ts` (`dateFrom`, `dateTo` as `IsDateString`)  
-`customers`, `ledger_entries`, `transactions`
+- `StatementQueryDto` (`src/reports/dto/statement-query.dto.ts:26`)
+- `dateFrom`, `dateTo` regex validation + lexical `dateTo >= dateFrom`
+- `ParseUUIDPipe` on `id`
 
 Execution Trace:
-1. Middleware + guards execute as above (request context + JWT + tenant scope).
-2. Controller validates UUID path and statement query DTO.
-3. Service enforces tenant context via `requireTenantId()`.
-4. Service verifies customer exists for tenant (`findFirst`), else `404`.
-5. Query A computes opening balance (`transaction_date < dateFrom`, posted only).
-6. Query B loads in-range ledger rows (`dateFrom <= transaction_date <= dateTo`, posted only), ordered by date and creation.
-7. Service computes running balance line-by-line (`debit - credit`) using `buildRunningBalance`.
-8. Service returns opening/closing balances and statement entries.
+1. Middleware + global guards enforce auth, tenant scope, and `OWNER|ADMIN` role.
+2. Validation pipe enforces query DTO and whitelist.
+3. Controller passes to service.
+4. Service requires tenant context, checks customer existence in tenant.
+5. In one RepeatableRead transaction, service fetches opening AR balance (`< dateFrom`) and in-range AR entries (`dateFrom..dateTo`, posted-only).
+6. `buildRunningBalance()` converts debit/credit bigints and calculates per-row running totals.
+7. Service returns opening/closing balances and entries list.
 
 Business Rules Observed:
-- Posted-only rule applied in both SQL queries.
-- Tenant isolation applied in all SQL conditions.
-- Opening + in-range entries model is implemented correctly for standard ranges.
+- Statement split into opening balance + in-range running ledger.
+- Only posted ledger transactions included.
+- Tenant isolation enforced both in existence and queries.
+- Snapshot consistency via RepeatableRead across opening+entries queries.
 
 Missing Rules:
-- No validation that `dateFrom <= dateTo`.
-- No pagination/limit for statement rows.
-- No explicit timezone normalization per tenant.
+- Date validation is format/lexical only; calendar-invalid dates not blocked pre-query.
+- No deterministic tie-breaker for same-date, same-created_at ledger rows (can reorder running sequence).
 
 Security Risks:
-- No per-role authorization for detailed financial statements.
+- Low: authz path is enforced globally and by role decorator.
 
 Financial Risks:
-- `bigint -> Number` conversions can lose precision.
-- Invalid date range (from > to) yields misleading but successful response.
+- Medium: non-deterministic row ordering can alter intermediate running-balance sequence display.
+- Medium: potential JS number precision issues on large cumulative balances.
 
 Edge Case Failures:
-- `dateFrom > dateTo` returns `200` with logically invalid snapshot.
-- Large statement windows can return huge payloads and stress memory.
+- Invalid dates may become DB/runtime errors.
+- Multiple ledger rows with same ordering keys can produce unstable entry order across executions.
 
 Concurrency Risks:
-- Opening and entry queries run as separate statements (Promise.all) without snapshot isolation; concurrent posts can produce inconsistent opening/entries pair.
+- Low: RepeatableRead mitigates split-read skew.
 
 Test Coverage:
-- Covered: opening balance logic, running balance progression, empty-range behavior, unknown id `404`.
-- Missing: invalid date order, `401`, cross-tenant access test, large-window limits.
+- Covered:
+- opening balance behavior (`line 705`)
+- running balance behavior (`line 705` scenario asserts step balances)
+- 404 unknown customer (`line 750`)
+- inverted date range reject (`line 888`)
+- Missing tests: unauthorized/forbidden, invalid calendar date, deterministic ordering under tied timestamps.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Add DTO-level custom validator enforcing `dateFrom <= dateTo`.
-- Run multi-query statement reads in a read-only transaction with consistent snapshot.
-- Add optional pagination for entries.
-- Add tests for invalid range, auth, and tenant isolation.
+- Replace regex+lexical date logic with strict parsed-date validator.
+- Add SQL `ORDER BY ... , le.created_at, le.id` (or equivalent stable key) for deterministic statements.
+- Add high-value/overflow and role-denial tests.
 
+--------------------------------------------
 ## API: GET /api/v1/reports/payment-accounts/{id}/balance
+--------------------------------------------
 
 Route Entry:
-`src/reports/reports.controller.ts` -> `getPaymentAccountBalance()`
+- `GET /api/v1/reports/payment-accounts/:id/balance` (`src/reports/reports.controller.ts:57`)
 
 Controller:
-`ReportsController.getPaymentAccountBalance(@Param('id', ParseUUIDPipe), @Query() BalanceQueryDto)`
+- `ReportsController.getPaymentAccountBalance()` (`src/reports/reports.controller.ts:64`)
 
 Service:
-`ReportsService.getPaymentAccountBalance(id, query)`
+- `ReportsService.getPaymentAccountBalance()` (`src/reports/reports.service.ts:127`)
 
 Repository:
-`PrismaService.paymentAccount.findFirst()` + raw SQL over `payment_entries`
+- `PrismaService.paymentAccount.findFirst(...)`
+- `PrismaService.$queryRaw(...)` on `payment_entries`
 
 DTO/Schema:
-`BalanceQueryDto`  
-`payment_accounts`, `payment_entries`
+- `BalanceQueryDto` (`src/reports/dto/balance-query.dto.ts:4`)
 
 Execution Trace:
-1. Middleware + guards set request and tenant context.
-2. Controller validates UUID and query DTO.
-3. Service requires tenant id and chooses `asOfDate`.
-4. Tenant-scoped payment account lookup (`findFirst`), else `404`.
-5. Raw SQL aggregates IN/OUT payment entries up to `asOfDate`.
-6. Service computes `balance = openingBalance + moneyIn - moneyOut`.
-7. Returns balance plus movement breakdown.
+1. Middleware/guards/validation path executes as above.
+2. Service resolves tenant and `asOfDate`.
+3. Service verifies payment account exists in tenant.
+4. Raw SQL aggregates `payment_entries` by `direction` up to `asOfDate`.
+5. Computes `balance = openingBalance + moneyIn - moneyOut`.
+6. Returns structured breakdown.
 
 Business Rules Observed:
-- Tenant-scoped entity existence check.
-- Point-in-time filter on `payment_entries.transaction_date`.
-- Opening balance included from master record.
+- Opening balance comes from account master record.
+- Money-in/money-out are derived from append-only payment entries.
+- Tenant filter enforced in all reads.
 
 Missing Rules:
-- Aggregate query does not join `transactions` to enforce posted-only semantics explicitly.
-- No account status check (inactive account still reportable without explicit policy).
-- No timezone-aware default date.
+- Query does not join `transactions` to enforce `status='POSTED'`.
+- No strict calendar-date validation.
+- No overflow protection on final arithmetic.
 
 Security Risks:
-- No RBAC granularity for cash/bank balance visibility.
+- Low for direct endpoint authorization.
 
 Financial Risks:
-- `bigint -> Number` conversion precision risk.
-- Implicit trust that every `payment_entry` belongs to valid posted business state.
+- High: inclusion of any non-posted/corrupt payment entries would misstate cash.
+- Medium: arithmetic may exceed safe numeric range after conversion.
 
 Edge Case Failures:
-- Large aggregates may overflow safe integer precision.
+- Invalid calendar date can fail at DB cast layer.
+- Potential mismatch if historical data integrity is compromised.
 
 Concurrency Risks:
-- Entity lookup and aggregate are separate statements; concurrent writes can cause read skew.
+- Low: single aggregate query.
 
 Test Coverage:
-- Covered: opening-balance inclusion, as-of filtering, unknown id `404`.
-- Missing: tenant isolation for this endpoint, unauthorized `401`, invalid query `400`, precision stress tests.
+- Covered:
+- includes opening balance (`line 266`)
+- asOfDate filtering (`line 281`)
+- unknown account 404 (`line 315`)
+- Missing tests: tenant isolation for this endpoint, unauthorized/forbidden, invalid calendar date, corruption/non-posted entry exclusion.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Join `transactions` and enforce `t.status = 'POSTED'` in aggregate query.
-- Use safe monetary representation (`bigint`/string) in response.
-- Add tenant isolation and auth coverage for this route.
+- Join `payment_entries` to `transactions` and filter `t.status='POSTED'`.
+- Add strict parsed-date validation and overflow-safe final arithmetic checks.
+- Add tests for role/tenant/auth negative paths and data-integrity contamination scenarios.
 
+--------------------------------------------
 ## API: GET /api/v1/reports/payment-accounts/{id}/statement
+--------------------------------------------
 
 Route Entry:
-`src/reports/reports.controller.ts` -> `getPaymentAccountStatement()`
+- `GET /api/v1/reports/payment-accounts/:id/statement` (`src/reports/reports.controller.ts:141`)
 
 Controller:
-`ReportsController.getPaymentAccountStatement(@Param('id', ParseUUIDPipe), @Query() StatementQueryDto)`
+- `ReportsController.getPaymentAccountStatement()` (`src/reports/reports.controller.ts:149`)
 
 Service:
-`ReportsService.getPaymentAccountStatement(id, query)`
+- `ReportsService.getPaymentAccountStatement()` (`src/reports/reports.service.ts:606`)
 
 Repository:
-`PrismaService.paymentAccount.findFirst()` + two raw SQL queries on `payment_entries` (second joined with `transactions`)
+- `PrismaService.paymentAccount.findFirst(...)`
+- `PrismaService.$transaction(... RepeatableRead ...)` with two raw queries on `payment_entries` and joined `transactions` for in-range rows
 
 DTO/Schema:
-`StatementQueryDto`  
-`payment_accounts`, `payment_entries`, `transactions`
+- `StatementQueryDto` (`src/reports/dto/statement-query.dto.ts:26`)
 
 Execution Trace:
-1. Middleware + global guards authenticate and set tenant context.
-2. Controller enforces UUID and validates `dateFrom/dateTo`.
-3. Service tenant check via `requireTenantId`.
-4. Service validates account existence by tenant (`findFirst`) else `404`.
-5. Query A computes historical net movement before `dateFrom`.
-6. Query B loads in-range payment entries with document/type metadata.
-7. Opening balance computed from `account.openingBalance + historicalBalance`; running balance computed row-wise.
-8. Statement object returned.
+1. Global middleware/guards/validation.
+2. Service validates tenant context and account existence.
+3. RepeatableRead transaction reads:
+- historical net (`SUM(IN)-SUM(OUT)`) before `dateFrom`
+- in-range money-in/money-out rows ordered by `transaction_date, created_at`
+4. Opening balance computed as `account.openingBalance + historicalBalance`.
+5. Running balance built in application layer.
+6. Response returned with opening/closing and entry rows.
 
 Business Rules Observed:
-- Tenant scoping in both queries.
-- Opening + range statement semantics implemented.
+- Running cash statement built from payment entries.
+- Opening computed from account opening + historical movement.
+- Snapshot consistency for historical/in-range pair.
 
 Missing Rules:
-- No validation that `dateFrom <= dateTo`.
-- Query A and B do not enforce transaction status explicitly.
-- No pagination on statement entries.
+- Neither historical nor in-range query enforces `transactions.status='POSTED'`.
+- Date validation not calendar-strict.
+- Stable ordering not guaranteed for exact timestamp ties.
 
 Security Risks:
-- No role-based restriction for account-level cashflow statements.
+- Low authz risk at endpoint level.
 
 Financial Risks:
-- Precision loss from bigint-to-number conversions.
-- Potential inclusion of entries tied to non-posted transactions if data integrity drifts.
+- High: unposted/corrupt payment entries can pollute statement balances.
+- Medium: running arithmetic can exceed safe JS numeric precision.
 
 Edge Case Failures:
-- Invalid date range accepted with `200`.
-- Large windows can return unbounded rows.
+- Invalid date strings (calendar-invalid) may throw DB errors.
+- Tie-order instability for simultaneous entry timestamps may change row sequence.
 
 Concurrency Risks:
-- Two-query statement built without snapshot transaction; can return inconsistent opening/entry composition during concurrent posting.
+- Low: RepeatableRead covers split reads.
 
 Test Coverage:
-- Covered: opening balance from pre-range entries + account opening, running balance in-range, unknown id `404`.
-- Missing: invalid date order, tenant isolation, unauthorized `401`, status-integrity scenarios.
+- Covered:
+- opening includes pre-range movement (`line 761`)
+- running balance (`line 787`)
+- unknown account 404 (`line 829`)
+- inverted date range reject (`line 896`)
+- Missing tests: unauthorized/forbidden, invalid calendar dates, posted-status contamination, tie-order determinism.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Enforce `dateFrom <= dateTo`.
-- Add posted-status filtering (via `transactions` join) in both historical and range queries.
-- Add snapshot-consistent read transaction and pagination options.
+- Enforce posted transaction status in payment-account statement SQL.
+- Add deterministic sort key (`pe.id`) after timestamp columns.
+- Strengthen date validation and add precision guards.
 
+--------------------------------------------
 ## API: GET /api/v1/reports/pending-payables
+--------------------------------------------
 
 Route Entry:
-`src/reports/reports.controller.ts` -> `getPendingPayables()`
+- `GET /api/v1/reports/pending-payables` (`src/reports/reports.controller.ts:98`)
 
 Controller:
-`ReportsController.getPendingPayables(@Query() PendingPayablesQueryDto)`
+- `ReportsController.getPendingPayables()` (`src/reports/reports.controller.ts:105`)
 
 Service:
-`ReportsService.getPendingPayables(query)`
+- `ReportsService.getPendingPayables()` (`src/reports/reports.service.ts:370`)
 
 Repository:
-Two raw SQL queries:  
-1) `ledger_entries` + `suppliers` for AP balances  
-2) `transactions` + `allocations` for open purchase documents
+- RepeatableRead transaction:
+- Balance query on `ledger_entries + suppliers`
+- Open-doc query on `transactions + allocations + payment transactions`
 
 DTO/Schema:
-`src/reports/dto/pending-payables-query.dto.ts` (`asOfDate?`, `supplierId?`, `minAmount?`)  
-`ledger_entries`, `transactions`, `allocations`, `suppliers`
+- `PendingPayablesQueryDto` (`src/reports/dto/pending-payables-query.dto.ts:5`)
+- `asOfDate` regex, `supplierId` UUID, `minAmount` int >=0
 
 Execution Trace:
-1. Middleware and guards authenticate request and set tenant context.
-2. Query DTO validated (`asOfDate` date-string, `supplierId` UUID, `minAmount` int >= 0).
-3. Service reads tenant and defaults `asOfDate`.
-4. SQL #1 computes supplier AP balances from ledger entries up to `asOfDate`, optional supplier filter, threshold by `minAmount`.
-5. If no balances > threshold, returns empty summary.
-6. SQL #2 fetches open posted PURCHASE docs for matched suppliers; outstanding = `total_amount - SUM(allocations.amount_applied)`.
-7. Results grouped per supplier, days past due derived from `asOfDate - transactionDate`.
-8. Response returns totals + suppliers + open documents.
+1. Global middleware/guards/validation.
+2. Service resolves tenant + asOf date.
+3. Builds optional `supplierId` SQL fragment.
+4. In one RepeatableRead tx, computes supplier AP balances from ledger entries (query 1).
+5. For suppliers returned by query 1, computes open purchase documents as `total - allocated_posted_payments` (query 2).
+6. Groups documents per supplier, derives oldest invoice and `daysPastDue`, totals payables.
+7. Returns aggregate payload.
 
 Business Rules Observed:
-- Tenant filter applied in both SQL queries.
-- Positive outstanding thresholding implemented.
-- Open document list avoids N+1 by single IN-query.
+- Positive AP balances only (`HAVING ... > minAmount`).
+- Open documents only when outstanding > 0.
+- Payment allocations are time-bounded by `payment_t.transaction_date <= asOfDate` and posted-only.
+- Two-query snapshot consistency via RepeatableRead.
 
 Missing Rules:
-- Critical: allocation amounts are not time-bounded by `asOfDate`.
-- SQL #1 does not explicitly join `transactions` for posted-only enforcement.
-- No supplier existence check when `supplierId` is provided (returns empty instead of explicit not-found behavior).
+- Balance query does not join `transactions` to enforce posted status.
+- Document outstanding logic ignores supplier-return credits (AP decreases not tied through allocations).
+- Date format validation is regex-only.
 
 Security Risks:
-- No role-level authorization for AP aging/payables visibility.
+- Low direct authz risk.
 
 Financial Risks:
-- **As-of integrity break**: future allocations (payments after `asOfDate`) still reduce `openDocuments.outstanding`, producing incorrect historical aging.
-- Potential mismatch: supplier `balance` (from ledger as-of) can disagree with summed `openDocuments` (allocation not as-of bounded).
-- Bigint-to-number precision risk on large sums.
+- High: report can show `balance` and summed open document outstanding that diverge when supplier returns/credits exist.
+- Medium: non-posted/corrupt ledger rows can influence supplier inclusion and balances.
 
 Edge Case Failures:
-- A supplier can appear with positive balance but empty `openDocuments` due to future allocations being counted.
-- Historical aging metrics (`daysPastDue`) become misleading when outstanding was incorrectly netted by post-as-of settlements.
+- Supplier with credits from returns can appear with lower balance but overstated open documents.
+- Invalid calendar date may bubble into DB errors.
 
 Concurrency Risks:
-- Multi-statement report built without snapshot transaction; SQL #1 and SQL #2 can observe different database moments.
+- Low: two-query skew mitigated with RepeatableRead.
 
 Test Coverage:
-- Covered: includes only positive AP suppliers, supplierId filter.
-- Missing: as-of allocation boundary case, cross-tenant leakage checks, invalid query inputs, unauthorized `401`, data consistency assertion between totals and documents.
+- Covered:
+- positive-balance inclusion (`line 564`)
+- supplier filter (`line 594`)
+- future-dated payment temporal integrity (`line 998`)
+- asOfDate datetime reject (`line 863`)
+- Missing tests: minAmount boundary semantics, unauthorized/forbidden, supplier-return credit impact on open docs, invalid calendar date.
 
 Verdict:
 ❌ Unsafe
 
 Required Fixes:
-- In SQL #2, include allocation amounts only when allocation’s payment transaction date is `<= asOfDate` (join `allocations.payment_transaction_id -> transactions`).
-- Optionally compute balances and open docs from one canonical query model to prevent drift.
-- Enforce posted-only semantics explicitly in SQL #1.
-- Add regression test: payment posted after as-of must not reduce historical outstanding.
+- Add `JOIN transactions t ... AND t.status='POSTED'` to balance query source rows.
+- Rework open-document outstanding model to account for return/credit-note effects (or explicitly expose unapplied credits and reconcile totals).
+- Add reconciliation invariant test: `sum(openDocuments.outstanding)` must align with reported balance policy.
 
+--------------------------------------------
 ## API: GET /api/v1/reports/pending-receivables
+--------------------------------------------
 
 Route Entry:
-`src/reports/reports.controller.ts` -> `getPendingReceivables()`
+- `GET /api/v1/reports/pending-receivables` (`src/reports/reports.controller.ts:87`)
 
 Controller:
-`ReportsController.getPendingReceivables(@Query() PendingReceivablesQueryDto)`
+- `ReportsController.getPendingReceivables()` (`src/reports/reports.controller.ts:94`)
 
 Service:
-`ReportsService.getPendingReceivables(query)`
+- `ReportsService.getPendingReceivables()` (`src/reports/reports.service.ts:252`)
 
 Repository:
-Two raw SQL queries:  
-1) `ledger_entries` + `customers` for AR balances  
-2) `transactions` + `allocations` for open sale documents
+- RepeatableRead transaction:
+- Balance query on `ledger_entries + customers`
+- Open-doc query on `transactions + allocations + payment transactions`
 
 DTO/Schema:
-`src/reports/dto/pending-receivables-query.dto.ts` (`asOfDate?`, `customerId?`, `minAmount?`)  
-`ledger_entries`, `transactions`, `allocations`, `customers`
+- `PendingReceivablesQueryDto` (`src/reports/dto/pending-receivables-query.dto.ts:5`)
 
 Execution Trace:
-1. Middleware/guards enforce authenticated tenant context.
-2. Query DTO validated by global validation pipe.
-3. Service resolves tenant and `asOfDate`.
-4. SQL #1 computes customer AR balances up to `asOfDate`; optional customer filter and `minAmount` threshold.
-5. Early return for zero-result case.
-6. SQL #2 fetches open posted SALE docs for customers from SQL #1 and computes outstanding from allocations.
-7. Service groups documents by customer and computes `daysPastDue`.
-8. Returns aggregate totals and customer detail.
+1. Global middleware/guards/validation.
+2. Service resolves tenant and effective `asOfDate`.
+3. Optional customer filter fragment added.
+4. Query 1 computes AR net balances (`AR_INCREASE - AR_DECREASE`) per customer.
+5. Query 2 fetches open SALE docs and outstanding by allocations tied to posted payments in scope.
+6. Service groups docs per customer and computes aging fields.
+7. Returns tenant totals and per-customer open documents.
 
 Business Rules Observed:
-- Tenant scoping in raw SQL.
-- Threshold and customer filters supported.
-- Open-document retrieval avoids N+1 query pattern.
+- Only positive receivables are returned.
+- Open documents require positive outstanding.
+- Time-sliced allocation logic excludes future-dated posted payments.
+- RepeatableRead ensures consistency between customer list and docs.
 
 Missing Rules:
-- Critical: allocation sums are not restricted to allocations effective by `asOfDate`.
-- SQL #1 does not explicitly enforce posted-only via transaction join.
-- No explicit customer existence behavior for `customerId` filter.
+- Query 1 does not enforce source transaction posted status.
+- Document outstanding does not account for customer-return credits.
+- Date validation is regex-only, not strict-date parsing.
 
 Security Risks:
-- No report-level role authorization.
+- Low direct authz risk.
 
 Financial Risks:
-- **As-of historical receivable can be wrong at document level** because future allocations are applied retroactively in SQL #2.
-- Total receivable and document-level outstanding can diverge materially.
-- Precision risk from bigint->number conversion.
+- High: receivable balance and document-level outstanding can diverge materially when returns/credits exist.
+- Medium: stray/unposted ledger entries can alter customer inclusion and balances.
 
 Edge Case Failures:
-- Customer may show positive balance with no open docs due to future payment allocations.
-- Aging buckets become unreliable for backdated analysis.
+- Credits from returns reduce customer balance but do not reduce per-document outstanding.
+- Invalid calendar date can throw DB-layer errors.
 
 Concurrency Risks:
-- SQL #1 and SQL #2 are executed separately without consistent snapshot; concurrent postings can produce mixed-time output.
+- Low: snapshot isolation is used correctly for split reads.
 
 Test Coverage:
-- Covered: positive-balance inclusion, `minAmount` filter, `customerId` filter, open-document outstanding/daysPastDue basic scenario.
-- Missing: future-allocation as-of scenario (critical), tenant isolation test, invalid query validation tests, unauthorized `401`.
+- Covered:
+- inclusion/exclusion by balance (`line 425`)
+- `minAmount` filter (`line 464`)
+- `customerId` filter (`line 493`)
+- open doc fields and aging (`line 522`)
+- future-dated payment temporal behavior (`line 915`)
+- asOfDate datetime reject (`line 856`)
+- Missing tests: unauthorized/forbidden, return-credit impact, invalid calendar date, consistency invariant between balances and open docs.
 
 Verdict:
 ❌ Unsafe
 
 Required Fixes:
-- Bind allocation contribution to payment transaction date `<= asOfDate`.
-- Add explicit posted-status enforcement in balance query.
-- Add invariant test ensuring `sum(openDocuments.outstanding)` aligns with customer balance as-of.
+- Enforce posted-status provenance in balance query.
+- Add credit-note/return-aware reconciliation in document outstanding model.
+- Add invariant tests for receivable total vs document totals under returns/credits.
 
+--------------------------------------------
 ## API: GET /api/v1/reports/products/{id}/stock
+--------------------------------------------
 
 Route Entry:
-`src/reports/reports.controller.ts` -> `getProductStock()`
+- `GET /api/v1/reports/products/:id/stock` (`src/reports/reports.controller.ts:71`)
 
 Controller:
-`ReportsController.getProductStock(@Param('id', ParseUUIDPipe), @Query() BalanceQueryDto)`
+- `ReportsController.getProductStock()` (`src/reports/reports.controller.ts:78`)
 
 Service:
-`ReportsService.getProductStock(id, query)`
+- `ReportsService.getProductStock()` (`src/reports/reports.service.ts:175`)
 
 Repository:
-`PrismaService.product.findFirst()` + raw SQL over `inventory_movements`
+- `PrismaService.product.findFirst(...)`
+- `PrismaService.$queryRaw(...)` on `inventory_movements`
 
 DTO/Schema:
-`BalanceQueryDto`  
-`products`, `inventory_movements`
+- `BalanceQueryDto` (`src/reports/dto/balance-query.dto.ts:4`)
 
 Execution Trace:
-1. Middleware and guards enforce JWT + tenant context.
-2. Controller validates product UUID and query DTO.
-3. Service requires tenant id; defaults `asOfDate`.
-4. Service verifies product exists under tenant.
-5. Raw SQL aggregates movement quantities by movement type and purchase-cost totals.
-6. Service computes `netStock`, `avgCost = round(totalPurchaseCost / totalPurchaseQty)`, `stockValue = netStock * avgCost`.
-7. Returns stock snapshot and movement breakdown.
+1. Global middleware/guards/validation.
+2. Service resolves tenant and `asOfDate`.
+3. Product existence check in-tenant.
+4. Raw SQL aggregates movement quantities and limited cost pools.
+5. `netStock` and computed `avgCost` derive in code.
+6. Returns current stock, avg cost, stock value, and movement breakdown.
 
 Business Rules Observed:
-- Tenant-scoped product existence check.
-- Point-in-time stock movement aggregation by movement type.
-- Includes returns and adjustments in stock quantity.
+- Stock quantity derives from movement ledger only.
+- Tenant and date bounded query.
+- All movement types included in quantity math.
 
 Missing Rules:
-- Costing formula ignores supplier-return valuation effects and non-purchase inflow valuation.
-- No explicit posted-status enforcement via transaction join.
-- No validation against negative stock readouts (if invariant drift exists).
+- Cost model excludes `CUSTOMER_RETURN_IN` and adjustments from valuation pool while including them in quantity.
+- No explicit filter tying movement rows to posted transactions.
+- Date validation is regex-only.
 
 Security Risks:
-- No role-level protection for inventory valuation data.
+- Low direct authz risk.
 
 Financial Risks:
-- **Valuation risk**: `avgCost` derived only from purchase totals can materially misstate value after supplier returns and certain adjustment patterns.
-- Precision/overflow risk from bigint->number and arithmetic done in JS number.
+- High: valuation can be materially wrong (e.g., stock from customer returns/adjustments with zero or distorted avgCost).
+- Medium: JS numeric overflow risk in `stockValue = netStock * avgCost`.
 
 Edge Case Failures:
-- If purchases are returned disproportionately (high-cost line returns), reported `avgCost` and `stockValue` can be substantially wrong.
-- Stock can be non-zero with `avgCost=0` (e.g., adjustment-in only), yielding misleading valuation.
+- Product with only return/adjustment stock can produce zero/incorrect avgCost.
+- Invalid calendar date may fail at DB layer.
 
 Concurrency Risks:
-- Product lookup and aggregate query are separate statements; possible read skew during concurrent postings.
+- Low: single aggregate query.
 
 Test Coverage:
-- Covered: as-of movement filtering, movement-type breakdown, stockValue formula consistency, unknown id `404`.
-- Missing: supplier-return valuation edge case, cross-tenant access test for this endpoint, negative/zero-cost edge cases, unauthorized `401`.
+- Covered:
+- asOfDate filter (`line 326`)
+- movement-type quantity breakdown (`line 354`)
+- stockValue formula identity (`line 397`)
+- 404 unknown product (`line 414`)
+- Missing tests: valuation correctness with customer returns and adjustments, invalid calendar dates, unauthorized/forbidden.
 
 Verdict:
 ❌ Unsafe
 
 Required Fixes:
-- Rework valuation: compute inventory value with cost-aware movement ledger, or derive from validated perpetual weighted-average state transitions.
-- Add explicit posted-transaction constraint.
-- Add targeted tests for supplier-return cost distortion and adjustment-only stock.
+- Redesign valuation logic to align cost pool with all stock-in/out semantics or compute from authoritative per-product cost policy.
+- Optionally use product cost snapshots instead of ad-hoc aggregate derivation.
+- Add tests covering return-heavy and adjustment-heavy valuation scenarios.
 
+--------------------------------------------
 ## API: GET /api/v1/reports/suppliers/{id}/balance
+--------------------------------------------
 
 Route Entry:
-`src/reports/reports.controller.ts` -> `getSupplierBalance()`
+- `GET /api/v1/reports/suppliers/:id/balance` (`src/reports/reports.controller.ts:29`)
 
 Controller:
-`ReportsController.getSupplierBalance(@Param('id', ParseUUIDPipe), @Query() BalanceQueryDto)`
+- `ReportsController.getSupplierBalance()` (`src/reports/reports.controller.ts:36`)
 
 Service:
-`ReportsService.getSupplierBalance(id, query)`
+- `ReportsService.getSupplierBalance()` (`src/reports/reports.service.ts:17`)
 
 Repository:
-`PrismaService.supplier.findFirst()` + raw SQL on `ledger_entries` joined `transactions`
+- `PrismaService.supplier.findFirst(...)`
+- `PrismaService.$queryRaw(...)` on `ledger_entries + transactions`
 
 DTO/Schema:
-`BalanceQueryDto`  
-`suppliers`, `ledger_entries`, `transactions`
+- `BalanceQueryDto` + `ParseUUIDPipe`
 
 Execution Trace:
-1. Middleware/guards authenticate and attach tenant context.
-2. Controller validates UUID + query DTO.
-3. Service requires tenant and derives `asOfDate`.
-4. Tenant-scoped supplier existence check (`findFirst`) else `404`.
-5. SQL aggregates AP increases/decreases, splitting return-related decreases by transaction type.
-6. Service computes payable/credit/settled classification.
-7. Returns supplier balance and breakdown.
+1. Middleware/context, auth guard, tenant guard, roles guard.
+2. DTO validation and UUID parsing.
+3. Tenant-scoped supplier lookup.
+4. Aggregate query computes purchases/payments/returns from AP ledger rows with posted transaction filter.
+5. Converts bigints and computes payable/credit status.
+6. Returns breakdown and net balance.
 
 Business Rules Observed:
-- Posted-only transactions enforced in SQL.
-- Transaction-type split for AP decreases (payments vs supplier returns).
-- Tenant scoping enforced in both lookup and aggregation.
+- Posted-only AP ledger inclusion.
+- Separate treatment of supplier returns (`AP_DECREASE` where `t.type='SUPPLIER_RETURN'`).
+- Tenant isolation and 404-on-cross-tenant via scoped lookup.
 
 Missing Rules:
-- No role-level authorization.
-- No safe-range handling for bigint conversions.
-- UTC-based default date ignores tenant timezone.
+- Date validation is not calendar-strict.
+- No post-arithmetic safe-range checks.
 
 Security Risks:
-- Broad report access to any authenticated tenant user.
+- Low: proper auth/tenant/role enforcement path exists.
 
 Financial Risks:
-- Precision loss for large cumulative sums.
-- Day-boundary drift due UTC default as-of date.
+- Medium: invalid date handling may fail as 500.
+- Medium: cumulative arithmetic can exceed safe range.
 
 Edge Case Failures:
-- Extremely large balances can silently lose integer precision.
+- Invalid calendar dates may not return clean validation error.
 
 Concurrency Risks:
-- Lookup + aggregate not wrapped in consistent snapshot.
+- Low: one aggregate query.
 
 Test Coverage:
-- Covered: zero baseline, as-of filtering, purchase/payment/return split, unknown id, tenant isolation `404`.
-- Missing: invalid query format, unauthorized `401`, high-volume precision tests.
+- Covered:
+- zero-balance no transaction (`line 56`)
+- asOfDate filtering (`line 70`)
+- breakdown split (`line 103`)
+- unknown supplier 404 (`line 145`)
+- tenant isolation 404 (`line 152`)
+- asOfDate format tests in wave section (`line 840+`)
+- Missing tests: unauthorized/forbidden, invalid calendar dates, overflow handling.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Preserve bigint fidelity in response.
-- Use tenant-timezone default date.
-- Add RBAC and security tests for report endpoints.
+- Replace regex date validation with strict date parser.
+- Add safe arithmetic guards beyond initial bigint conversion.
+- Add explicit authz negative tests.
 
+--------------------------------------------
 ## API: GET /api/v1/reports/suppliers/{id}/statement
+--------------------------------------------
 
 Route Entry:
-`src/reports/reports.controller.ts` -> `getSupplierStatement()`
+- `GET /api/v1/reports/suppliers/:id/statement` (`src/reports/reports.controller.ts:111`)
 
 Controller:
-`ReportsController.getSupplierStatement(@Param('id', ParseUUIDPipe), @Query() StatementQueryDto)`
+- `ReportsController.getSupplierStatement()` (`src/reports/reports.controller.ts:119`)
 
 Service:
-`ReportsService.getSupplierStatement(id, query)`
+- `ReportsService.getSupplierStatement()` (`src/reports/reports.service.ts:486`)
 
 Repository:
-`PrismaService.supplier.findFirst()` + two raw SQL queries over `ledger_entries` joined `transactions`
+- `PrismaService.supplier.findFirst(...)`
+- RepeatableRead transaction with opening + entry raw queries
 
 DTO/Schema:
-`StatementQueryDto`  
-`suppliers`, `ledger_entries`, `transactions`
+- `StatementQueryDto` (`src/reports/dto/statement-query.dto.ts:26`)
 
 Execution Trace:
-1. Middleware + guards enforce auth and tenant scope.
-2. Controller validates supplier UUID and statement query.
-3. Service checks tenant context and supplier existence.
-4. SQL #1 computes opening AP balance before `dateFrom`.
-5. SQL #2 fetches in-range AP ledger lines, categorized as debit/credit.
-6. `buildRunningBalance` computes running totals.
-7. Service returns statement object.
+1. Global middleware/guards/validation.
+2. Service gets tenantId and validates supplier existence.
+3. RepeatableRead transaction computes opening AP balance before `dateFrom` and in-range entries between `dateFrom` and `dateTo` for posted txns.
+4. Running balance built in service.
+5. Closing balance derived from last entry or opening value.
+6. Response returned.
 
 Business Rules Observed:
-- Posted-only entries enforced.
-- Tenant filtering present everywhere.
-- Running balance chronology ordered by transaction date + creation time.
+- Opening balance and movement rows are AP-based.
+- Posted-only filtering exists for both opening and range entries.
+- Running balance progression is explicit and auditable.
 
 Missing Rules:
-- No `dateFrom <= dateTo` validation.
-- No pagination controls for potentially long statements.
+- Date validation not strict calendar parsing.
+- Ordering lacks immutable tie-breaker at ledger-row granularity.
 
 Security Risks:
-- No RBAC on supplier statement access.
+- Low: endpoint is protected by JWT + tenant + role checks.
 
 Financial Risks:
-- Bigint-to-number precision risk in opening and line amounts.
+- Medium: statement row order can become non-deterministic for same-date/same-created_at collisions.
+- Medium: numeric precision risk on very large running totals.
 
 Edge Case Failures:
-- Inverted date range accepted without error.
-- Large history periods may create oversized response payloads.
+- Invalid dates can fail at SQL cast.
+- Potential unstable row ordering in heavy batch posting windows.
 
 Concurrency Risks:
-- Opening and in-range queries not snapshot-locked; concurrent postings can create temporal inconsistency.
+- Low: RepeatableRead used correctly.
 
 Test Coverage:
-- Covered: opening-balance correctness, running-balance correctness, empty-range behavior, unknown id.
-- Missing: cross-tenant test for this endpoint, invalid range test, unauthorized `401`.
+- Covered:
+- opening balance (`line 621`)
+- running balance (`line 642`)
+- empty-range behavior (`line 674`)
+- 404 unknown supplier (`line 694`)
+- date-range validation (`line 872`, `880`, `904`)
+- Missing tests: unauthorized/forbidden, invalid calendar date values, row-order determinism on equal timestamps.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Add date-order validator and pagination.
-- Execute related reads in consistent snapshot transaction.
-- Add auth/tenant/validation regression tests.
+- Add strict calendar date validator.
+- Add stable tie-break ordering including ledger entry identity.
+- Add authz negative-path and deterministic-order tests.
+

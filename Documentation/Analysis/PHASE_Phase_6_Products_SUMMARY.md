@@ -1,46 +1,41 @@
 # PHASE SUMMARY REPORT
 
 Title:
-Phase 6 - Products
+Phase 6 — Products
 
 Module Purpose:
-- Manage tenant-scoped product master data and expose current stock snapshot for operational use.
+- Manage tenant-scoped product master data and expose current stock snapshots derived from inventory movements.
 
 Top Risks:
-1. Product APIs return placeholder `_computed` metrics (always zero/null), which can be mistaken for real financial/inventory facts.
-2. Create/update validation allows low-quality master data (`name` whitespace scenarios, empty-string SKU), increasing catalog corruption risk.
-3. `POST /products` is not idempotent; retry behavior can create duplicate logical products when SKU is omitted.
+1. Authorization trust gap: request auth trusts JWT payload without revalidating user/tenant active status in DB, allowing suspended users with unexpired tokens to keep accessing product APIs.
+2. Status deactivation race: `PATCH /products/:id/status` checks stock and then updates status in separate steps without locking, creating a TOCTOU window that can violate intended deactivation safeguards.
+3. Update-path safety gap: `PATCH /products/:id` accepts `name: null` through DTO optional semantics and can trigger unhandled DB null-constraint failures (500), plus SKU can be changed even after transaction history.
 
 Common Failure Patterns:
-- Service-layer checks are strong on tenant isolation but weaker on business semantics.
-- Repeated pre-check then mutate flow without optimistic concurrency controls.
-- DTOs include fields not enforced/persisted (`reason` on status update).
-- API contract drift between documentation and implementation (response shape and write-idempotency expectations).
+- Reliance on app-layer checks without DB defense-in-depth constraints (composite tenant-scoped integrity).
+- DTO permissiveness around nullable/empty strings for optional fields.
+- Partial negative-path coverage (happy path and tenant isolation covered, role/edge/concurrency largely uncovered).
 
 Financial Integrity Risks:
-- Misleading `_computed` values can drive incorrect stock/procurement decisions in consuming UIs.
-- Non-idempotent create can split inventory/costing across duplicate products.
-- Stock endpoint depends on upstream posting invariants; if movement posting violates no-negative-stock rules, this module exposes corrupted state without guardrails.
-- `bigint` stock is converted to JS `number`, risking precision loss at scale.
+- Stock-related control in status updates is not concurrency-safe.
+- Stock aggregation logic depends on hardcoded movement-type mapping; future enum changes can silently skew inventory values.
+- SKU mutability after transactional usage can break downstream audit/reconciliation mappings.
 
 Architectural Weaknesses:
-- Tenant isolation depends on consistent service filtering; no database-level row security.
-- Direct Prisma access in service layer (no repository abstraction) increases repeated logic and rule drift risk.
-- Inconsistent response semantics across endpoints (`list` paginated envelope, others raw object).
-- No optimistic locking/versioning on master-data writes.
+- No repository abstraction; service methods directly issue Prisma/SQL calls, increasing repeated risk patterns.
+- API contract drift: product response DTO/docs imply `_computed` and older endpoint set (including DELETE), while runtime responses/tests differ.
+- `status_change_logs` lacks foreign keys to enforce referential integrity for actor/entity references.
 
 Missing Tests:
-- `GET /products`: explicit `status=ACTIVE/INACTIVE/ALL` coverage and invalid query inputs.
-- `GET /products/:id`: invalid UUID and unauthenticated cases.
-- `GET /products/:id/stock`: invalid UUID, unauthorized, return/adjustment movement scenarios, large-number handling.
-- `PATCH /products/:id`: duplicate SKU conflict integration, blank input normalization, no-op patch behavior, concurrent update behavior.
-- `PATCH /products/:id/status`: invalid status payload, `reason` handling, stock-dependent inactivation rules.
-- `POST /products`: idempotent retry behavior and blank-like field rejection.
+- `POST /products`: role 403, empty-string SKU behavior, normalization/null edge cases.
+- `GET /products`: status filter matrix, pagination boundaries, unauthenticated access.
+- `GET /products/:id`: invalid UUID and unauthenticated access.
+- `GET /products/:id/stock`: invalid UUID, unauthenticated access, movement-type completeness, overflow behavior.
+- `PATCH /products/:id`: duplicate SKU update conflict, `name:null` failure path, role 403, SKU-with-history rejection.
+- `PATCH /products/:id/status`: positive-stock deactivation rejection, audit-log insert assertion, same-status idempotency, role 403, concurrency race.
 
 Frontend Impact:
-- UI may display zero stock/history from `_computed` and show false operational state.
-- Search/filter quality degrades with weak normalization (blank names/SKU edge cases).
-- Inconsistent response contracts increase frontend branching and error-prone integration logic.
+- Contract inconsistency risk: docs and Swagger models indicate fields/endpoints that runtime does not consistently return/implement (notably `_computed` and legacy DELETE references), increasing client integration breakage risk.
 
 Phase Verdict:
 ❌ Blocker

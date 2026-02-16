@@ -8,443 +8,414 @@ Phase 10 — imports
 --------------------------------------------
 
 Route Entry:
-- Global route prefix `api/v1` from `src/main.ts`.
-- Controller route `@Controller('imports')` in `src/imports/imports.controller.ts`.
-- Method: `list(@Query() query: ListImportsQueryDto)`.
+- `src/main.ts`: global prefix `api/v1`
+- `src/app.module.ts`: global middleware + guards (`JwtAuthGuard`, `TenantScopeGuard`, `RolesGuard`)
+- `src/imports/imports.controller.ts`: `@Controller('imports')`, `@Get()`
 
 Controller:
-- `src/imports/imports.controller.ts` (`GET /imports` → `importsService.listBatches(query)`).
+- `ImportsController.list(@Query() query: ListImportsQueryDto)`
 
 Service:
-- `src/imports/imports.service.ts#listBatches`.
+- `ImportsService.listBatches(query)`
 
 Repository:
-- `prisma.importBatch.count({ where })`.
-- `prisma.importBatch.findMany({ where, orderBy, skip, take, select })`.
+- `prisma.importBatch.count({ where })`
+- `prisma.importBatch.findMany({ where, orderBy, skip, take, select })`
 
 DTO/Schema:
-- DTO: `src/imports/dto/list-imports-query.dto.ts` (`module`, `status`, `page`, `limit`).
-- Global validation: `src/common/pipes/validation.pipe.ts`.
-- DB model: `ImportBatch` in `prisma/schema.prisma`.
+- DTO: `src/imports/dto/list-imports-query.dto.ts`
+- Schema: `prisma/schema.prisma` models `ImportBatch`, enums `ImportModule`, `ImportStatus`
 
 Execution Trace:
-1. Request enters middleware chain from `src/app.module.ts`: `RequestContextMiddleware` then `TenantContextMiddleware`.
-2. `RequestContextMiddleware` creates request-scoped context and request ID.
-3. `TenantContextMiddleware` attempts to decode bearer token and set tenant/user in context.
-4. `JwtAuthGuard` enforces authentication globally.
-5. `TenantScopeGuard` enforces tenant context and writes tenant/user to request context.
-6. Validation pipe validates query against `ListImportsQueryDto` (enum + integer + min checks for this endpoint).
-7. Controller forwards query DTO to service.
-8. Service derives `tenantId` from async context (`requireTenantId`).
-9. Service builds Prisma `where` with strict tenant filter and optional `module/status` filters.
-10. Service executes `count` and paginated `findMany` in parallel and returns pagination metadata.
+1. Request enters `GET /api/v1/imports`.
+2. `RequestContextMiddleware` assigns requestId; `TenantContextMiddleware` optionally decodes bearer token into context.
+3. `JwtAuthGuard` enforces authentication (endpoint is not `@Public`).
+4. `TenantScopeGuard` enforces tenant presence and writes tenant/user context.
+5. `RolesGuard` allows all authenticated roles (no `@Roles` on this endpoint).
+6. ValidationPipe validates query DTO (`module`, `status`, `page`, `limit`).
+7. Controller calls `importsService.listBatches(query)`.
+8. Service builds tenant-scoped Prisma `where` filter and executes count + paginated find.
+9. Service returns `{data,total,page,limit,totalPages}`.
 
 Business Rules Observed:
-- Tenant isolation is enforced in DB query filter (`where.tenantId`).
-- Optional filtering by `module` and `status` is implemented.
-- Default pagination exists (`page=1`, `limit=20`).
+- Tenant-scoped listing (`where.tenantId = context tenant`).
+- Optional filtering by `module` and `status`.
+- Pagination defaults (`page=1`, `limit=20`).
 
 Missing Rules:
-- No upper bound on `limit` (can request very large pages).
-- No performance guardrail for deep offsets (`skip`) on large datasets.
-- No explicit sorting option validation (fixed `createdAt desc` only).
+- No upper bound on `limit` (unbounded read size).
+- No explicit deterministic tie-breaker in sort (`createdAt` only).
 
 Security Risks:
-- Potential denial-of-service via oversized `limit` causing large DB result sets.
+- Potential read amplification/DoS via very large `limit`.
 
 Financial Risks:
-- Operational visibility endpoint can degrade under load; delayed import monitoring can impact financial operations and incident response.
+- No direct balance mutation risk; indirect operational risk if endpoint is abused for high-load enumeration.
 
 Edge Case Failures:
-- `limit` extremely high can cause memory pressure and slow API response.
+- Extremely large `limit` can cause large response payloads and slow queries.
 
 Concurrency Risks:
-- Read path only; no write race in this endpoint.
+- Offset pagination can drift under concurrent insertions (non-repeatable pages).
 
 Test Coverage:
-- Covered: module filter (Test 23) and status filter (Test 24) in `test/integration/imports.integration.spec.ts`.
-- Missing: pagination boundary tests (`limit` max, large page), auth failure tests, list tenant isolation test.
+- Covered: module filter and status filter (`test/integration/imports.integration.spec.ts`, Tests 23-24).
+- Missing: auth 401 path, large-limit behavior, pagination stability assertions.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Enforce max page size (for example `limit <= 100`).
-- Add integration tests for pagination bounds and unauthorized access.
+- Add `@Max(100)` (or stricter) to `ListImportsQueryDto.limit`.
+- Add tie-breaker order: `{ createdAt: 'desc' }, { id: 'desc' }`.
+- Add tests for unauthorized access and `limit` cap enforcement.
 
 --------------------------------------------
 ## API: GET /api/v1/imports/{id}
 --------------------------------------------
 
 Route Entry:
-- Global route prefix `api/v1` from `src/main.ts`.
-- Controller route `@Controller('imports')` in `src/imports/imports.controller.ts`.
-- Method: `detail(@Param('id', ParseUUIDPipe), @Query('page', ParseIntPipe), @Query('limit', ParseIntPipe))`.
+- `src/main.ts`: global prefix `api/v1`
+- `src/app.module.ts`: global middleware + guards
+- `src/imports/imports.controller.ts`: `@Get(':id')`
 
 Controller:
-- `src/imports/imports.controller.ts` (`GET /imports/:id` → `importsService.getBatchDetail(id, page, limit)`).
+- `ImportsController.detail(id, page?, limit?)`
 
 Service:
-- `src/imports/imports.service.ts#getBatchDetail`.
+- `ImportsService.getBatchDetail(batchId, page, limit)`
 
 Repository:
-- `prisma.importBatch.findFirst({ where: { id, tenantId } })`.
-- `prisma.importRow.count({ where: { importBatchId, tenantId } })`.
-- `prisma.importRow.findMany({ where, orderBy, skip, take, select })`.
+- `prisma.importBatch.findFirst({ where: { id, tenantId } })`
+- `prisma.importRow.count({ where: { importBatchId, tenantId } })`
+- `prisma.importRow.findMany({ where, orderBy, skip, take, select })`
 
 DTO/Schema:
-- Param validation: `ParseUUIDPipe`.
-- Query parsing: `ParseIntPipe` in controller (not DTO-based min/max).
-- DB models: `ImportBatch`, `ImportRow`.
+- Param pipe: `ParseUUIDPipe`
+- Query pipes: `ParseIntPipe({ optional: true })` for `page`, `limit`
+- Schema: `ImportBatch`, `ImportRow`
 
 Execution Trace:
-1. Request enters request/tenant middleware chain.
-2. Request context is initialized and tenant/user metadata is attached.
-3. `JwtAuthGuard` enforces bearer authentication.
-4. `TenantScopeGuard` enforces tenant context and writes to async local storage.
-5. `ParseUUIDPipe` validates import batch ID format.
-6. `ParseIntPipe` parses optional `page`/`limit` query params.
-7. Controller calls service method with parsed values.
-8. Service resolves tenant ID from request context.
-9. Service fetches batch with `(id, tenantId)`; returns 404 if absent.
-10. Service fetches row count and paginated rows, returns combined payload with `rowsPagination`.
+1. Request enters `GET /api/v1/imports/:id`.
+2. Middleware + guards execute as above; tenant context is established.
+3. `ParseUUIDPipe` validates `id`.
+4. `ParseIntPipe` parses optional `page` and `limit` (no min/max constraints).
+5. Controller calls `getBatchDetail(id, page, limit)`.
+6. Service fetches tenant-scoped batch (`findFirst`); throws 404 if missing.
+7. Service counts rows and fetches paginated rows by `rowNumber ASC`.
+8. Service returns batch fields + `rows` + pagination metadata.
 
 Business Rules Observed:
-- Strict tenant-scoped batch lookup.
-- Row-level details include validation/commit status and error fields.
+- Strict tenant isolation via `id + tenantId` filter.
+- Batch detail includes row-level status/error and created record links.
 
 Missing Rules:
-- No `Min(1)`/max cap for `page` and `limit` in this endpoint.
-- No response shape redaction policy for potentially sensitive raw import row data.
+- No min/max validation for `page` and `limit`.
+- No explicit cap on `limit`.
 
 Security Risks:
-- Large/invalid pagination values may trigger heavy queries or Prisma errors.
+- Unbounded `limit` can expose excessive row data in one call.
 
 Financial Risks:
-- Insufficient pagination controls can degrade operational diagnostics during active import windows.
+- No direct mutation risk; poor pagination guards can degrade observability during critical import operations.
 
 Edge Case Failures:
-- Negative or zero `page`/`limit` can produce invalid `skip/take` behavior.
+- Negative `page`/`limit` can propagate to Prisma `skip/take` and cause runtime failures.
+- Very high `limit` may create memory/response pressure.
 
 Concurrency Risks:
-- Read path only; no direct write race.
+- Row pagination snapshots are non-transactional; total and rows may not perfectly align during concurrent status updates.
 
 Test Coverage:
-- Covered: detail returns rows (Test 25), tenant isolation on detail (Test 26).
-- Missing: invalid/negative pagination tests, unauthorized access tests.
+- Covered: happy path detail rows (Test 25), cross-tenant detail blocked with 404 (Test 26).
+- Missing: invalid `page/limit`, large-limit caps, 401 path.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Replace ad hoc `ParseIntPipe` with DTO validation (`Min(1)`, max cap).
-- Add tests for pagination bounds and malformed query values.
+- Replace ad-hoc query parsing with validated DTO (`@Min(1)`, `@Max(100)`).
+- Add tests for invalid pagination and oversized `limit`.
 
 --------------------------------------------
 ## API: POST /api/v1/imports
 --------------------------------------------
 
 Route Entry:
-- Global route prefix `api/v1` from `src/main.ts`.
-- Controller route `@Controller('imports')`.
-- Method: `upload(@UploadedFile() file, @Body() dto)` with `FileInterceptor('file', { storage: memoryStorage() })`.
+- `src/imports/imports.controller.ts`: `@Post()` with `FileInterceptor('file', { memoryStorage, fileSize: 10MB })`
 
 Controller:
-- `src/imports/imports.controller.ts#upload`.
+- `ImportsController.upload(file, dto)`
 
 Service:
-- `src/imports/imports.service.ts#uploadFile`.
+- `ImportsService.uploadFile(file, dto)`
 
 Repository:
-- Transactional writes:
-  - `tx.importBatch.create`
-  - `tx.importRow.createMany`
+- `tx.importBatch.create(...)`
+- `tx.importRow.createMany(...)`
 
 DTO/Schema:
-- DTO: `src/imports/dto/create-import.dto.ts` (`@IsEnum(ImportModule)`).
-- Parsers: `CsvParserService`, `XlsxParserService`.
-- DB models: `ImportBatch`, `ImportRow`.
+- DTO: `CreateImportDto` (`module` restricted to `SUPPLIERS|CUSTOMERS|PRODUCTS|OPENING_BALANCES`)
+- Parser services: `CsvParserService`, `XlsxParserService`
+- Schema: `ImportBatch`, `ImportRow`, enum `ImportSourceType`
 
 Execution Trace:
-1. Request passes request-context and tenant-context middleware.
-2. JWT + tenant guards enforce authentication and tenant scope.
-3. Multer `FileInterceptor` reads entire file into memory (`memoryStorage`).
-4. Validation pipe validates `module` enum via `CreateImportDto`.
-5. Controller calls `uploadFile(file, dto)`.
-6. Service checks tenant/user context, file presence, file size, and extension.
-7. Service parses file (CSV/XLSX) into headers + rows.
-8. Service enforces `MAX_ROWS` limit.
-9. Service writes import batch and initial import rows in one DB transaction with `PENDING_MAPPING`/`PENDING` status.
-10. Service returns batch metadata, detected columns, and required fields.
+1. Request enters multipart `POST /api/v1/imports`.
+2. Middleware + guards authenticate and set tenant context.
+3. Multer interceptor buffers file in memory and enforces 10MB limit.
+4. ValidationPipe validates form field body (`module`).
+5. Service checks file existence, extension, MIME type, and row-count (`<=10000`).
+6. Service parses CSV/XLSX into headers + row objects.
+7. Service transaction creates `import_batch` (`PENDING_MAPPING`) and `import_rows` (`PENDING`).
+8. Service returns batch metadata with detected columns and required fields.
 
 Business Rules Observed:
-- File extension validation (`.csv/.xlsx/.xls`).
-- Max row limit (10,000) and max file size (10MB, checked in service).
-- Batch and row creation is atomic in one transaction.
+- Supported modules are explicitly constrained by DTO.
+- File type validation includes extension + MIME.
+- Tenant-scoped batch/row creation.
+- Initial lifecycle state set to `PENDING_MAPPING` / `PENDING`.
 
 Missing Rules:
-- Required MIME validation is not implemented despite `ALLOWED_MIMETYPES` constant.
-- Multer upload limit is not configured (`limits.fileSize`) so oversized files are buffered first.
-- `CreateImportDto` accepts full `ImportModule` enum including `TRANSACTIONS`, while endpoint spec allows only 4 modules.
-- No idempotency for write endpoint despite API convention.
+- No explicit duplicate-header detection in uploaded files.
+- No anti-formula sanitization for spreadsheet cells.
+- No explicit rate limit for import endpoint beyond global generic limiter.
 
 Security Risks:
-- Memory DoS risk: `memoryStorage` without multer file-size limit can exhaust process memory before service checks run.
-- Extension-only type checks allow spoofed content type payloads.
+- `memoryStorage` means each concurrent upload consumes RAM (up to 10MB/request).
+- MIME and extension checks do not guarantee benign content.
 
 Financial Risks:
-- Allowing `module=TRANSACTIONS` creates batches for unsupported workflow, enabling false-success downstream commits.
-- Import intake instability under large payloads can block operational financial data ingestion.
+- Badly parsed headers (e.g., duplicate column names) can silently remap values and lead to incorrect downstream master data.
 
 Edge Case Failures:
-- Empty files produce empty batch with `PENDING_MAPPING` and no rows, potentially leading to meaningless lifecycle states.
-- Invalid XLS parsing can throw parser errors; returns 400 but without structured import-level diagnostics.
+- Duplicate CSV/XLSX headers collapse values into the same object key.
+- Empty files still create batches, which may lead to confusing no-op workflows.
 
 Concurrency Risks:
-- Batch creation itself is transactional; no major race in this endpoint.
+- High concurrency uploads can cause memory pressure due to in-memory buffering.
 
 Test Coverage:
-- Covered: CSV upload (Test 1), XLSX upload (Test 2), unsupported type (Test 3), >10MB logical check (Test 4), invalid module (Test 5), header detection (Test 6).
-- Missing: module `TRANSACTIONS` rejection test, MIME spoofing test, upload memory-limit enforcement test, unauthorized/tenant isolation for upload.
+- Covered: CSV/XLSX happy paths, unsupported type, size limit, invalid module, header detection (Tests 1-6 + TRANSACTIONS rejection test).
+- Missing: duplicate-header handling, 10,001-row rejection, MIME spoof cases, unauthorized path.
 
 Verdict:
-❌ Unsafe
+⚠ Risky
 
 Required Fixes:
-- Enforce multer `limits: { fileSize: 10 * 1024 * 1024 }` at interceptor level.
-- Enforce extension + MIME validation.
-- Restrict `CreateImportDto.module` to supported subset (`SUPPLIERS|CUSTOMERS|PRODUCTS|OPENING_BALANCES`).
-- Add idempotency strategy for upload writes.
+- Add duplicate-header validation and reject ambiguous files.
+- Add parser/content sanity checks (and optional antivirus scanning in production path).
+- Add tests for row-cap breach, MIME spoofing, and 401 behavior.
 
 --------------------------------------------
 ## API: POST /api/v1/imports/{id}/commit
 --------------------------------------------
 
 Route Entry:
-- Global route prefix `api/v1` from `src/main.ts`.
-- Controller route `@Controller('imports')`.
-- Method: `commit(@Param('id'), @Body() dto)`.
+- `src/imports/imports.controller.ts`: `@Post(':id/commit')`, `@Roles('OWNER','ADMIN')`
 
 Controller:
-- `src/imports/imports.controller.ts#commit`.
+- `ImportsController.commit(id, dto)`
 
 Service:
-- `src/imports/imports.service.ts#commitImport`.
+- `ImportsService.commitImport(batchId, dto)`
 
 Repository:
-- Reads: `importBatch.findFirst`, `importRow.findMany` (VALID/INVALID).
-- Status update: `importBatch.update({ status: 'PROCESSING' })`.
-- Transactional writes per row into `supplier/customer/product/paymentAccount` and `importRow.update`.
-- Final `importBatch.update({ status: 'COMPLETED', successRows, failedRows })`.
+- Read: `importBatch.findFirst`, `importRow.findMany` (VALID/INVALID)
+- Write (inside tx): `importBatch.updateMany` (CAS to `PROCESSING`), entity creates/updates (`supplier/customer/product/paymentAccount`), `importRow.update`, `importBatch.update` (`COMPLETED`)
 
 DTO/Schema:
-- DTO: `src/imports/dto/commit-import.dto.ts` (`skipInvalidRows?: boolean`, default true).
-- DB models: `ImportBatch`, `ImportRow`, `Supplier`, `Customer`, `Product`, `PaymentAccount`.
+- DTO: `CommitImportDto` (`skipInvalidRows?: boolean`, default true)
+- Schema: `ImportBatch`, `ImportRow`, `Supplier`, `Customer`, `Product`, `PaymentAccount`
 
 Execution Trace:
-1. Request passes middleware and global guards (auth + tenant).
-2. UUID param is validated by `ParseUUIDPipe`.
-3. Body is validated/transformed via `CommitImportDto`.
-4. Service enforces batch existence under tenant and requires `status=VALIDATED`.
-5. Service loads valid rows and invalid rows.
-6. If `skipInvalidRows=false` and invalid rows exist, returns 400.
-7. Service sets batch status to `PROCESSING` outside main transaction.
-8. Service iterates valid rows in a Prisma transaction; per module it creates or updates target records.
-9. Row is marked `SUCCESS` or `FAILED` with reason; counters are updated.
-10. Batch is marked `COMPLETED`; API returns summary.
+1. Request enters `POST /api/v1/imports/:id/commit`.
+2. Middleware + guards run; `RolesGuard` enforces `OWNER|ADMIN`.
+3. Param UUID and body DTO validation/transformation execute.
+4. Service fetches tenant-scoped batch; requires status `VALIDATED`.
+5. Service fetches VALID rows and INVALID-row count; may abort if `skipInvalidRows=false` and invalid rows exist.
+6. In transaction, service CAS-updates batch `VALIDATED -> PROCESSING`; conflict if already claimed.
+7. For each VALID row, service creates/updates domain record by module and updates row to `SUCCESS` or `FAILED`.
+8. Service finalizes batch to `COMPLETED` with counts and returns commit summary.
 
 Business Rules Observed:
-- Commit requires `VALIDATED` status.
-- `skipInvalidRows` enforcement exists.
-- Duplicate handling implemented for supplier/customer names and product SKU.
-- Opening balance import updates existing payment account by name.
+- Role restriction (`OWNER|ADMIN`).
+- Explicit lifecycle precondition (`VALIDATED` only).
+- CAS transition prevents duplicate successful commits on same batch.
+- Duplicate prevention checks for supplier/customer names and product SKU before create.
 
 Missing Rules:
-- No idempotency key/header handling for commit endpoint.
-- No conditional state transition (`VALIDATED -> PROCESSING`) in one atomic statement.
-- Unsupported `TRANSACTIONS` module is not blocked; rows become `SUCCESS` with no record created.
-- No financial-period or “no prior entries” safeguards before overwriting `openingBalance`.
-- No reconciliation check after commit (expected created count vs row states).
+- No guard preventing `OPENING_BALANCES` overwrite when account already has payment history.
+- No endpoint idempotency key despite platform-wide “POST safe to retry” expectation.
+- No case-insensitive account lookup in commit for opening balances (validator is case-insensitive, commit lookup is case-sensitive).
 
 Security Risks:
-- Non-idempotent POST allows accidental replay and duplicate master record creation.
-- Race between concurrent commits on same batch can create duplicates (especially suppliers/customers).
+- Detailed internal error strings can be persisted to `errorMessage` from caught exceptions.
 
 Financial Risks:
-- `OPENING_BALANCES` commit overwrites `payment_accounts.opening_balance` directly, potentially distorting all historical account balances.
-- Direct opening-balance mutation bypasses posting engine/event-entry controls.
-- Response mismatch risk: batch stores `failedRows = failed + invalid`, but API response `failedRows` returns only runtime failed rows.
+- Critical: `OPENING_BALANCES` directly overwrites `payment_accounts.opening_balance`; this can retroactively distort all account-balance reports when historical payment entries already exist.
+- Response/batch count semantics differ (`failedRows` response excludes INVALID skipped rows), increasing reconciliation confusion.
 
 Edge Case Failures:
-- If transaction fails after status set to `PROCESSING`, batch can remain stuck in `PROCESSING` with no recovery path.
-- Supplier/customer duplicate prevention is app-level (`findFirst` + create) without DB unique constraint on name, so concurrency can bypass it.
+- Mapping may validate `accountName` case-insensitively, but commit can still fail row due to case-sensitive lookup.
+- Very large valid batches process row-by-row in one transaction; long-running transaction risk.
 
 Concurrency Risks:
-- High: check-then-act race on batch status and duplicate detection logic.
-- No serializable isolation/idempotent tokenization in commit flow.
+- CAS protects same-batch double commit, but cross-batch concurrent commits creating same supplier/customer/SKU can still hit DB unique races and abort transaction unexpectedly.
+- Transaction isolation level is default (not explicitly `Serializable`) for commit.
 
 Test Coverage:
-- Covered: valid commit for suppliers/customers/products (Tests 11-13), skip invalid rows behavior (Tests 14-15), status precondition (Test 16), duplicate supplier handling (Test 17), row linkage (Test 18), opening balance happy path (Test 27).
-- Missing: concurrent commit race tests, idempotent replay tests, `TRANSACTIONS` module rejection test, processing-stuck recovery tests, opening-balance with existing payment entries tests, unauthorized tests.
+- Covered: supplier/customer/product commit happy paths, skip/abort invalid behavior, status precondition, duplicate-name handling, createdRecord links, concurrent same-batch commit conflict.
+- Missing: role-based 403 checks, tenant-isolation checks for commit endpoint, opening-balance commit when payment history exists, case-insensitive `accountName` behavior.
 
 Verdict:
 ❌ Unsafe
 
 Required Fixes:
-- Add strict idempotency for commit.
-- Make state transition atomic (`where: { id, tenantId, status: 'VALIDATED' }`).
-- Reject unsupported module values at DTO and service boundaries.
-- Protect opening balance updates (allow only initialization window or accounts without entries) and audit old/new values.
-- Harmonize `failedRows` semantics between response and persisted batch.
+- For `OPENING_BALANCES`, block overwrite if target account has payment history (`payment_entries` exists) or move to reversible posting-entry model.
+- Use case-insensitive account lookup in commit (match validator semantics).
+- Add deterministic retry semantics (idempotency key or durable commit token).
+- Add explicit concurrency/unique-violation handling path and corresponding tests.
 
 --------------------------------------------
 ## API: POST /api/v1/imports/{id}/map
 --------------------------------------------
 
 Route Entry:
-- Global route prefix `api/v1` from `src/main.ts`.
-- Controller route `@Controller('imports')`.
-- Method: `mapColumns(@Param('id'), @Body() dto)`.
+- `src/imports/imports.controller.ts`: `@Post(':id/map')`
 
 Controller:
-- `src/imports/imports.controller.ts#mapColumns`.
+- `ImportsController.mapColumns(id, dto)`
 
 Service:
-- `src/imports/imports.service.ts#mapColumns`.
+- `ImportsService.mapColumns(batchId, dto)`
 
 Repository:
-- `importBatch.findFirst` by tenant.
-- `importRow.findMany` all rows for batch.
-- Per-row `importRow.update` in transaction.
-- `importBatch.update({ status: 'VALIDATED' })`.
+- `importBatch.findFirst`
+- `importRow.findMany`
+- In tx: `importBatch.updateMany` (CAS `PENDING_MAPPING -> VALIDATED`), per-row `importRow.update`
+- Validator dependency: `paymentAccount.findMany` for OPENING_BALANCES checks
 
 DTO/Schema:
-- DTO: `src/imports/dto/column-mapping.dto.ts` (`columnMappings: Record<string, string>` only `@IsObject`).
-- Validation logic: `RowValidatorService`.
-- DB models: `ImportBatch`, `ImportRow`.
+- DTO: `ColumnMappingDto` (`columnMappings` as object)
+- Validation rules: `RowValidatorService` + `REQUIRED_FIELDS`
+- Schema: `ImportBatch`, `ImportRow`, `PaymentAccount`
 
 Execution Trace:
-1. Request passes middleware and global guards.
-2. UUID param validation runs.
-3. Body validation confirms `columnMappings` is an object.
-4. Service checks batch exists in tenant and status is `PENDING_MAPPING`.
-5. Service verifies all required target fields are present in mapping keys.
-6. Service loads all rows and transforms row JSON by mapping headers -> system fields.
-7. Service validates rows via `RowValidatorService` (module-specific checks).
-8. Service updates each row `rawDataJson`, `status`, and optional `errorMessage` in transaction.
-9. Service updates batch to `VALIDATED`.
-10. Service returns counts, errors, and preview.
+1. Request enters `POST /api/v1/imports/:id/map`.
+2. Middleware + guards authenticate and scope tenant (no role restriction).
+3. UUID and body object validation run.
+4. Service verifies batch existence and status `PENDING_MAPPING`.
+5. Service ensures all required system fields are present in mapping keys.
+6. Service loads rows, remaps raw data to system fields, validates each row by module rules.
+7. In transaction, service CAS-updates batch to `VALIDATED`; then updates each row to `VALID`/`INVALID` with error details.
+8. Service returns summary (`validRows`, `invalidRows`, preview, errors).
 
 Business Rules Observed:
-- Required fields must be mapped before validation.
-- Module-specific row validation rules are applied.
-- Batch must be in `PENDING_MAPPING` before mapping.
+- Required field mapping enforced before validation.
+- Module-specific row validation rules applied.
+- Atomic state claim (`PENDING_MAPPING -> VALIDATED`) prevents concurrent remap success.
 
 Missing Rules:
-- No strict validation for `columnMappings` keys/values (unknown fields and non-string values accepted).
-- No check that mapped source headers actually exist in uploaded file header set.
-- Raw source data is overwritten with mapped data, reducing audit traceability.
-- No prevention of mapping unsupported module (`TRANSACTIONS` passes with zero required fields).
+- No verification that mapped header values actually exist in detected file headers.
+- No strict schema for `columnMappings` values (non-string values not rejected explicitly).
+- No role restriction on mapping operation (any authenticated role can mutate import state).
 
 Security Risks:
-- Weak mapping schema validation allows malformed payloads and silent data coercion.
+- Overly permissive `columnMappings` structure can enable malformed payloads and ambiguous mapping behavior.
 
 Financial Risks:
-- Inadequate mapping validation can silently map wrong columns and produce financially incorrect master data.
-- Accepting `TRANSACTIONS` module creates false “validated” batches that do not represent real importable workflows.
+- Incorrect mappings can silently produce invalid/empty transformed values and reduce data quality before commit.
 
 Edge Case Failures:
-- Mapping to non-existent header fills required fields with `''`, causing mass invalid rows without clear mapping-level failure.
-- Large batches are updated row-by-row; response can include very large error arrays with no cap.
+- Duplicate mappings or unknown target fields are not explicitly rejected.
+- Header name normalization (case/whitespace) is not standardized.
 
 Concurrency Risks:
-- Concurrent map requests can race on status and row updates; no compare-and-swap update on batch status.
+- CAS handles state transition race, but row set is fetched outside transaction; large batches can be stale if external DB mutation occurs.
 
 Test Coverage:
-- Covered: required-field mapping enforcement (Test 7), status precondition (Test 8), row validation/errors (Test 9), status transition (Test 10).
-- Missing: malformed `columnMappings` payload tests, unknown header mapping tests, concurrency tests, `TRANSACTIONS` module path tests, tenant-isolation test for map.
+- Covered: missing required mappings, wrong status rejection, row-level error reporting, status transition.
+- Missing: invalid mapping shapes, unknown header keys, tenant-isolation tests for map endpoint, role/401 tests.
 
 Verdict:
 ⚠ Risky
 
 Required Fixes:
-- Add strict DTO validation for mapping keys and string values.
-- Validate mapping values against detected header list from upload.
-- Preserve original raw row payload in separate field for auditability.
-- Add atomic status transition guard and concurrency tests.
+- Validate `columnMappings` as `Record<allowedSystemField, existingHeaderName>`.
+- Reject mappings to non-existent source headers.
+- Add authz decision for whether STAFF is allowed to map.
+- Add negative tests for malformed mapping payloads and cross-tenant map access.
 
 --------------------------------------------
 ## API: POST /api/v1/imports/{id}/rollback
 --------------------------------------------
 
 Route Entry:
-- Global route prefix `api/v1` from `src/main.ts`.
-- Controller route `@Controller('imports')`.
-- Method: `rollback(@Param('id'))`.
+- `src/imports/imports.controller.ts`: `@Post(':id/rollback')`, `@Roles('OWNER','ADMIN')`
 
 Controller:
-- `src/imports/imports.controller.ts#rollback`.
+- `ImportsController.rollback(id)`
 
 Service:
-- `src/imports/imports.service.ts#rollbackImport`.
+- `ImportsService.rollbackImport(batchId)`
 
 Repository:
-- `importBatch.findFirst` (tenant+id).
-- `importRow.findMany` for successful rows.
-- Dependency checks via `transaction.count`, `transactionLine.count`, `paymentEntry.count`.
-- Transactional updates to target records, import rows, and batch status.
+- Read: `importBatch.findFirst`, `importRow.findMany` (SUCCESS rows)
+- In serializable tx: dependency counts (`transaction`, `transactionLine`, `paymentEntry`), entity updates (`supplier/customer/product/paymentAccount`), `importRow.update`, `importBatch.update`
 
 DTO/Schema:
-- UUID param validation via `ParseUUIDPipe`.
-- DB models: `ImportBatch`, `ImportRow`, `Supplier`, `Customer`, `Product`, `PaymentAccount`.
+- Param: UUID via `ParseUUIDPipe`
+- Schema: `ImportBatch`, `ImportRow`, `Supplier`, `Customer`, `Product`, `PaymentAccount`, `Transaction`, `TransactionLine`, `PaymentEntry`
 
 Execution Trace:
-1. Request passes middleware and global guards.
-2. UUID param is validated.
-3. Service verifies batch exists in tenant and is `COMPLETED`.
-4. Service loads successful rows with created record IDs.
-5. Service performs dependency checks (outside transaction) per record type.
-6. If any dependency exists, service throws `ConflictException`.
-7. Service starts DB transaction and reverts created records:
-8. Supplier/customer/product are soft-disabled (`status=INACTIVE`); payment account balance forced to `0`.
-9. Import rows are reset to `VALID` and created-record links cleared.
-10. Batch status is set to `ROLLED_BACK`, summary is returned.
+1. Request enters `POST /api/v1/imports/:id/rollback`.
+2. Middleware + guards execute; `RolesGuard` enforces `OWNER|ADMIN`.
+3. UUID validation runs.
+4. Service loads tenant batch and enforces status `COMPLETED`.
+5. Service preloads SUCCESS rows with `createdRecordId`.
+6. Service opens `Serializable` transaction.
+7. Inside tx, service checks each created record for dependencies; any dependency triggers 409.
+8. Service applies rollback mutations:
+   - supplier/customer/product -> `status=INACTIVE`
+   - payment account -> restore `openingBalance` from `rawDataJson.previousOpeningBalance` (current logic restores only once per account)
+   - import rows -> `status=VALID`, clear created record links
+9. Service sets batch status `ROLLED_BACK` and returns summary.
 
 Business Rules Observed:
-- Rollback allowed only from `COMPLETED` state.
-- Dependency blocking exists (`409`) before rollback actions.
-- Rollback updates batch and row statuses to reversible state markers.
+- Role restriction (`OWNER|ADMIN`).
+- Status precondition (`COMPLETED` only).
+- Dependency checks block rollback if records are already referenced.
+- Batch-level rollback done in one DB transaction with serializable isolation.
 
 Missing Rules:
-- No restoration of original payment account opening balance for `OPENING_BALANCES` imports (it is hard-reset to 0).
-- Dependency check and rollback mutation are not performed atomically (TOCTOU gap).
-- No idempotency/replay handling.
-- No tenant constraint in update `where` clauses (relies on trusted prefetch context).
+- No robust restoration logic for repeated `OPENING_BALANCES` rows targeting the same account in one batch.
+- No explicit idempotent replay behavior for rollback endpoint.
 
 Security Risks:
-- Replayable rollback endpoint can be retried without idempotent response semantics.
+- Rollback endpoint mutates many records; no dedicated rate/throttling policy beyond global defaults.
 
 Financial Risks:
-- Critical: opening balance rollback can corrupt balances by setting to `0` instead of prior value.
-- If account had legitimate pre-import opening balance, rollback destroys that baseline.
-- Non-atomic dependency check can allow race where dependencies appear after check.
+- Critical defect: duplicate `OPENING_BALANCES` rows for the same account can restore the wrong baseline.
+  - Commit stores per-row `previousOpeningBalance` sequentially.
+  - Rollback processes rows in reverse and restores only first encountered per account.
+  - This can restore intermediate balance (not true pre-import value), corrupting cash baseline.
 
 Edge Case Failures:
-- Rollback of imported opening balances on active accounts with historical usage has ambiguous and potentially irreversible outcomes.
-- “All-or-nothing” intent is weakened by check-before-transaction window.
+- Multi-row same-account rollback baseline corruption (described above).
+- Endpoint returns `rolledBackCount` count of processed rows, not count of unique records mutated.
 
 Concurrency Risks:
-- High: check-then-act race between dependency checks and rollback writes.
+- Dependency checks are transactional (good), but `successRows` are prefetched before transaction; stale row-set risk is low but still non-zero if external DB writes occur.
 
 Test Coverage:
-- Covered: happy rollback (Test 19), dependency conflict 409 for supplier transactions (Test 20), status precondition (Test 21), batch state update (Test 22).
-- Missing: rollback for CUSTOMER/PRODUCT/PAYMENT_ACCOUNT dependency paths, opening-balance restore correctness tests, concurrent rollback vs transaction creation race tests, tenant-isolation tests for rollback.
+- Covered: happy rollback, dependency conflict for supplier path, wrong-status rejection, batch status update, single-row opening balance restore.
+- Missing: multi-row same-account opening-balance rollback, customer/product/payment-account dependency conflicts, role-based 403, tenant-isolation for rollback, 401 path.
 
 Verdict:
 ❌ Unsafe
 
 Required Fixes:
-- Store pre-change values for reversible updates (especially opening balances) and restore exact prior values.
-- Move dependency checks inside rollback transaction (or use locks/serializable isolation).
-- Add idempotency/replay-safe semantics.
-- Add endpoint tests for all record-type dependency branches and race conditions.
+- Fix opening-balance restoration algorithm for repeated account rows (restore true pre-import value deterministically).
+- Add regression test: same account appears multiple times in one OPENING_BALANCES batch.
+- Add endpoint authz/isolation tests (403/401/cross-tenant).
+- Clarify and enforce rollback idempotency contract.

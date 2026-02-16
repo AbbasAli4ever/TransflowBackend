@@ -4,41 +4,39 @@ Title:
 Phase 8 — Suppliers
 
 Module Purpose:
-- Manage supplier master data and expose supplier-facing read models for balances and outstanding purchase documents in a multi-tenant accounting backend.
+- Manage supplier master data and expose supplier-focused operational read models (`balance`, `open-documents`) used by posting/allocation workflows.
 
 Top Risks:
-1. Supplier creation/update relies on app-level duplicate checks without DB-enforced uniqueness, creating race-condition duplicate suppliers under concurrency.
-2. `GET /suppliers/{id}/balance` merges all `AP_DECREASE` into `totalPaid`, which conflates actual payments with non-payment AP decreases (notably supplier returns).
-3. `GET /suppliers/{id}/open-documents` computes outstanding from allocations only; supplier return credits are not allocated automatically, so open-doc totals can diverge from payable balance.
+1. `GET /suppliers/:id/open-documents` can overstate outstanding when supplier returns/credits exist, creating financial inconsistency with AP balance.
+2. `PATCH /suppliers/:id/status` deactivation safeguard can be bypassed because purchase draft posting path does not revalidate supplier active status at post time.
+3. Supplier balance/read contracts are drifting (`SupplierBalanceResponseDto` vs actual payload keys), raising integration and reconciliation risk.
 
 Common Failure Patterns:
-- TOCTOU check-then-write pattern (`findFirst` then `create/update`) without transactional uniqueness enforcement.
-- Placeholder `_computed` fields returned as if authoritative financial values.
-- Documentation and implementation drift (planned query params/response richness not present).
+- TOCTOU checks (read-then-write without lock/version checks).
+- Cross-module invariant dependence without enforcement at both edges (status module assumes posting module behavior).
+- Spec/DTO/runtime drift in response structures.
 
 Financial Integrity Risks:
-- Duplicate supplier identities can split postings and distort AP analytics.
-- Balance semantics are ambiguous (`totalPaid` is not truly payments-only).
-- Document-level outstanding and account-level payable can disagree in normal return-credit scenarios.
-- Bigint-to-Number conversions in aggregate endpoints can degrade precision at high cumulative values.
+- Open-document totals can diverge from true payable state.
+- Inactive suppliers can still end up with new AP obligations from older drafts.
+- Operational screens can show contradictory liability numbers across endpoints.
 
 Architectural Weaknesses:
-- Tenant scoping is service-by-service (no query-level automatic safety net), increasing long-term drift risk.
-- Missing DB constraints for supplier business uniqueness.
-- Status-change API accepts `reason` but does not persist/audit it.
-- Open-documents endpoint lacks explicit response DTO in Swagger.
+- Tenant safety and invariants are enforced mostly at service/query level, not by composite DB constraints.
+- Raw SQL read models are duplicated across modules with limited shared invariant guards.
+- Functional uniqueness index for supplier names exists in migration SQL but not in Prisma model metadata.
 
 Missing Tests:
-- Concurrency/race tests for duplicate supplier creation and rename collisions.
-- Supplier-return effect tests for both `/suppliers/{id}/balance` and `/suppliers/{id}/open-documents`.
-- Invalid UUID and unauthenticated-route tests for several supplier endpoints.
-- Query validation/contract tests for list sorting/filter boundaries and empty/no-op patch behavior.
+- Role-based 403 for supplier create/update/status endpoints.
+- Deactivation rejection when supplier has outstanding AP.
+- Supplier return + open-documents consistency tests.
+- Balance response contract key assertions (`totalPayments`/`totalReturns` vs documented fields).
+- Concurrent status-update correctness and status log assertions.
 
 Frontend Impact:
-- UI can display incorrect supplier financial cues due to `_computed` placeholders and `totalPaid` mislabeling.
-- Reconciliation screens may show mismatched totals between "current balance" and "open documents" after returns/credits.
-- Swagger contract gaps (missing response schema, status-code mismatch) increase client integration errors.
+- Frontend can display unresolved supplier invoices while supplier balance shows settled/credit state.
+- API contract mismatch on balance keys can break typed clients or cause silent UI misbinding.
+- Admin workflows may wrongly trust deactivation as a hard stop for future liabilities.
 
 Phase Verdict:
-⚠ Needs fixes
-
+❌ Blocker

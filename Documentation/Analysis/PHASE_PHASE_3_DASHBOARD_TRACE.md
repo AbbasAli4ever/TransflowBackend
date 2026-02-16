@@ -8,110 +8,101 @@ Phase 3 — Dashboard
 --------------------------------------------
 
 Route Entry:
-- Global prefix `api/v1` is set in `src/main.ts`.
-- Controller route is `@Controller('dashboard')` + `@Get('summary')` in `src/dashboard/dashboard.controller.ts`.
-- Effective route is `GET /api/v1/dashboard/summary`.
+- `src/main.ts`: global prefix `api/v1`.
+- `src/dashboard/dashboard.controller.ts`: `@Controller('dashboard')` + `@Get('summary')` => `GET /api/v1/dashboard/summary`.
 
 Controller:
-- File: `src/dashboard/dashboard.controller.ts`
-- Method: `getSummary(@Query() query: DashboardQueryDto)`
-- Forwards request directly to `DashboardService.getSummary(query)`.
+- `src/dashboard/dashboard.controller.ts`
+- Method: `getSummary(@Query() query: DashboardQueryDto)`.
+- No route-level guard annotation; route is protected by global guards in `AppModule`.
 
 Service:
-- File: `src/dashboard/dashboard.service.ts`
-- Method: `getSummary(query)`
-- Reads tenant context, resolves `asOfDate`, computes overdue threshold, then executes 5 aggregate queries in parallel.
+- `src/dashboard/dashboard.service.ts`
+- Method: `getSummary(query)`.
+- Reads tenant context, resolves `asOfDate`, computes `overdueThreshold`, executes 5 aggregate sub-queries in one `RepeatableRead` transaction, maps SQL rows to response DTO shape.
 
 Repository:
-- No dedicated repository layer.
-- Direct raw SQL via `PrismaService.$queryRaw` in `DashboardService`.
+- No separate repository class.
+- Direct data access via `PrismaService` + `tx.$queryRaw` in:
+- `queryCash`
+- `queryInventory`
+- `queryReceivables`
+- `queryPayables`
+- `queryRecentActivity`
 
 DTO/Schema:
-- DTO: `src/dashboard/dto/dashboard-query.dto.ts`
-  - `asOfDate?: string`
-  - `@IsOptional()` + `@IsDateString()`
-- Validation: global `ValidationPipe` in `src/main.ts` (`whitelist`, `forbidNonWhitelisted`, transform enabled).
-- Relevant schema: `prisma/schema.prisma`
-  - `payment_accounts`, `payment_entries`, `inventory_movements`, `ledger_entries`, `transactions`, `allocations`.
+- Query DTO: `src/dashboard/dto/dashboard-query.dto.ts`
+- Validation: `asOfDate` optional + regex `^\d{4}-\d{2}-\d{2}$`.
+- DB schema references in `prisma/schema.prisma`:
+- `tenants.timezone`
+- `payment_accounts`, `payment_entries`
+- `products`, `inventory_movements`
+- `ledger_entries`, `allocations`, `transactions`
 
 Execution Trace:
-1. Request enters middleware chain from `AppModule.configure`: `RequestContextMiddleware` then `TenantContextMiddleware` (`src/app.module.ts`).
-2. `RequestContextMiddleware` initializes AsyncLocalStorage context and request ID (`src/common/middleware/request-context.middleware.ts`).
-3. `TenantContextMiddleware` opportunistically decodes bearer JWT and sets context if token parses (`src/common/middleware/tenant-context.middleware.ts`).
-4. Global guards execute: `JwtAuthGuard` authenticates non-public routes, then `TenantScopeGuard` enforces tenant context and writes tenant/user into AsyncLocalStorage (`src/common/guards/jwt-auth.guard.ts`, `src/common/guards/tenant-scope.guard.ts`).
-5. Global validation pipe applies `DashboardQueryDto` and validates query params.
-6. Controller invokes `dashboardService.getSummary(query)`.
-7. Service calls `requireTenantId()` from request context; missing tenant throws `UnauthorizedException`.
-8. Service sets `asOfDate = query.asOfDate ?? today()` and `overdueThreshold = subtractDays(asOfDate, 30)`.
-9. Service runs in parallel:
-   - `queryCash`: opening balance +/- payment entries (`direction IN/OUT`) filtered by tenant + `transaction_date <= asOfDate`.
-   - `queryInventory`: stock movement aggregation for active products and computed stock value.
-   - `queryReceivables`: AR balances from ledger entries + overdue customer detection from SALE docs and allocations.
-   - `queryPayables`: AP balances from ledger entries + overdue supplier detection from PURCHASE docs and allocations.
-   - `queryRecentActivity`: sums posted transaction totals on `transaction_date = asOfDate`.
-10. Service converts bigint aggregates to JS `Number`, computes `cash.totalBalance`, and returns JSON payload.
+1. HTTP request hits global middleware chain (`RequestContextMiddleware`, `TenantContextMiddleware`) from `src/app.module.ts`.
+2. `RequestContextMiddleware` sets `x-request-id` and initializes async local storage context.
+3. `TenantContextMiddleware` attempts JWT verification and pre-populates tenant/user context if Bearer token is valid.
+4. Global `JwtAuthGuard` validates JWT (`src/common/guards/jwt-auth.guard.ts` + `src/auth/strategies/jwt.strategy.ts`).
+5. Global `TenantScopeGuard` requires `request.user.tenantId`, then writes tenant/user into request context.
+6. Global `RolesGuard` allows access because route has no `@Roles(...)` constraint.
+7. Global validation pipe validates query DTO (`src/common/pipes/validation.pipe.ts`).
+8. Controller forwards validated query to `DashboardService.getSummary()`.
+9. Service enforces tenant presence via `requireTenantId()` and resolves `asOfDate` from query or tenant business date (`getBusinessDate`).
+10. Service computes overdue threshold (`asOfDate - 30 days`) and runs all five aggregate SQL queries in one `RepeatableRead` transaction.
+11. Bigint money values are converted through `safeMoney()` and response object is assembled.
+12. Response is returned directly (no response envelope transform); errors are normalized by `HttpExceptionFilter`.
 
 Business Rules Observed:
-- JWT + tenant scope are enforced globally for this route.
-- All SQL queries include tenant filtering (`tenant_id = ...`) for isolation.
-- `asOfDate` defaults to current date when omitted.
-- Summary is derived from append-only truth tables (`payment_entries`, `inventory_movements`, `ledger_entries`) plus posted transactions.
-- Overdue threshold is fixed to 30 days.
-- Inventory section only counts products where `status = 'ACTIVE'`.
+- Tenant-scoped reads are enforced in every dashboard SQL query (`tenant_id = ...`).
+- Dashboard is read-only and uses derived balances from entry/event tables (not stored balance snapshots).
+- `asOfDate` supports point-in-time reads; default uses tenant timezone from `tenants.timezone`.
+- Overdue threshold is fixed at 30 days.
+- All five sections run inside one `RepeatableRead` snapshot to avoid cross-query temporal drift.
+- Monetary bigint aggregates are guarded by `safeMoney` to prevent silent JS precision loss.
 
 Missing Rules:
-- Point-in-time overdue logic does not enforce point-in-time allocations: allocation sums are not filtered by allocation/payment date.
-- Overdue open-document logic does not account for non-allocation AP/AR decreases (e.g., returns) when determining document outstanding.
-- `asOfDate` format is documented as `YYYY-MM-DD`, but DTO accepts full ISO datetime strings that break date arithmetic helper.
-- No requirement enforcement for tenant timezone when defaulting `asOfDate` (uses UTC date only).
-- No explicit read-consistency rule (single snapshot) across 5 aggregate subqueries.
+- No semantic calendar-date validation for `asOfDate` (format-only regex; invalid dates like `2026-02-31` are not rejected at DTO layer).
+- No explicit rule for handling inactive/deleted users with still-valid JWTs on read endpoints.
+- No explicit rule clarifying whether overdue is invoice-level or full party-level exposure once any overdue doc exists.
 
 Security Risks:
-- Any authenticated tenant user role can access full tenant-wide financial snapshot; no endpoint-level role restriction.
-- Validation accepts datetime strings; malformed but validator-accepted format can trigger runtime error path (500), creating reliability/availability risk.
-- Positive: raw SQL uses parameter binding (`$queryRaw` template literals), reducing SQL injection risk.
+- `JwtStrategy.validate()` returns token payload without checking current user/tenant status in DB (`src/auth/strategies/jwt.strategy.ts`). Disabled/deleted users with unexpired tokens can still access dashboard.
+- No route-specific authorization test coverage for unauthenticated/invalid token requests in `test/integration/dashboard.integration.spec.ts`.
 
 Financial Risks:
-- **Critical point-in-time error**: overdue calculations in `queryReceivables/queryPayables` aggregate `allocations` without as-of filtering. Payments posted after `asOfDate` can reduce historical overdue incorrectly.
-- **Aging classification drift**: overdue document detection uses `transactions.total_amount - allocations`, while true balances use ledger entries; returns/other AR/AP decreases can cause mismatch between overdue flags and real exposure.
-- Bigint-to-`Number` conversion for monetary aggregates can lose precision at high volumes.
-- Inventory avg-cost in SQL uses integer division semantics; possible truncation bias relative to rounded costing expectations.
+- Overdue amount/count are party-level, not document-level. If one invoice is overdue and another is current, entire party balance is treated overdue (`queryReceivables`/`queryPayables` join `overdue_*` then sum full balance). This can overstate aging exposure.
+- `cash.totalBalance` is summed in JS after per-account conversion; aggregate overflow protection is not applied to the final sum.
 
 Edge Case Failures:
-- `asOfDate=2026-02-15T00:00:00.000Z` passes `@IsDateString()`, but `subtractDays()` appends `T00:00:00Z` again, producing invalid date and likely 500.
-- Default `today()` uses UTC date, which can shift business date for Pakistan timezone tenants near day boundaries.
-- Overdue amount/count semantics are customer/supplier-level and can overstate overdue exposure when only part of balance is actually aged.
+- `asOfDate` invalid calendar values (example: `2026-02-31`) can pass DTO regex and fail later in SQL date casting, resulting in 500-class behavior instead of deterministic 400 validation error.
+- If tenant timezone in DB is invalid IANA value, `Intl.DateTimeFormat` can throw at runtime and fail request.
 
 Concurrency Risks:
-- Five independent aggregate queries run via `Promise.all` outside a read transaction; concurrent postings can yield internally inconsistent sections in one response.
-- No explicit repeatable-read/snapshot isolation for dashboard read path.
+- Read consistency risk is largely mitigated by single `RepeatableRead` transaction.
+- Remaining risk: none critical in this endpoint’s current query orchestration.
 
 Test Coverage:
-- Existing coverage (`test/integration/dashboard.integration.spec.ts`):
-  - Empty tenant all zeros.
-  - Cash balances per account.
-  - Inventory value/product/low stock behavior.
-  - Receivables and payables positive balances and basic overdue path.
-  - Recent activity aggregation.
-  - `asOfDate` filtering.
-  - Tenant isolation.
-- Missing coverage:
-  - Unauthorized request (401) and invalid token behavior for dashboard route.
-  - Invalid `asOfDate` format and datetime-string failure mode.
-  - Point-in-time correctness where allocations/payments exist after `asOfDate`.
-  - Overdue correctness with supplier/customer returns affecting AR/AP.
-  - Cross-query consistency under concurrent posting.
-  - Large-value precision/overflow behavior.
+- Existing integration coverage (`test/integration/dashboard.integration.spec.ts`) includes:
+- Empty tenant snapshot.
+- Cash/inventory/receivables/payables/recent activity calculations.
+- Tenant isolation behavior.
+- `asOfDate` format checks for datetime string and random invalid string.
+- Future-dated payment temporal integrity regression for receivables overdue.
+- Coverage gaps:
+- No unauthorized/invalid-token test for this endpoint.
+- No invalid calendar-date test (`YYYY-MM-DD` but impossible date).
+- No precision overflow test path for `safeMoney` failure propagation at dashboard level.
+- No mixed-aging scenario asserting document-level overdue semantics.
 
 Verdict:
-❌ Unsafe
+⚠ Risky
 
 Required Fixes:
-- Rework overdue CTEs to be point-in-time correct:
-  - Join allocations to payment transactions and include only payments with `payment_transaction.transaction_date <= asOfDate`.
-- Align overdue outstanding computation with ledger truth (or explicitly model and apply returns/credits to document aging logic).
-- Replace `@IsDateString()` with strict date-only validation (`YYYY-MM-DD`) and harden `subtractDays()` to reject invalid date values safely.
-- Use tenant timezone when defaulting `asOfDate`.
-- Execute all dashboard aggregates in one read transaction with consistent snapshot (repeatable read) or materialized point-in-time read model.
-- Avoid unsafe bigint-to-number coercion for money totals (return strings or checked-safe integer conversion).
-- Add adversarial integration tests for all missing scenarios above.
+- Replace regex-only `asOfDate` validation with strict semantic date validator; reject impossible dates with 400.
+- In JWT validation flow, load user and tenant state and reject inactive/deleted principals.
+- Define and implement overdue semantics explicitly (document-level aging recommended); align SQL + tests to that contract.
+- Add aggregate safe-range guard for computed JS totals (for example `cash.totalBalance`).
+- Add integration tests for: 401 unauthorized/invalid token, impossible calendar dates, mixed overdue/current documents.
+
+--------------------------------------------
