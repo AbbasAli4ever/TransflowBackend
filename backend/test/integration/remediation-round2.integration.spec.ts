@@ -764,4 +764,144 @@ describe('Remediation Round 2 (Integration)', () => {
       expect(res.body.message).not.toContain('Email');
     });
   });
+
+  // ─── D1: Draft Idempotency Keys ──────────────────────────────────────────────
+
+  describe('D1: Draft Idempotency Keys', () => {
+    it('submitting a purchase draft twice with the same idempotency key returns the same draft', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const key = uuid();
+      const today = new Date().toISOString().split('T')[0];
+
+      const res1 = await request(app.getHttpServer())
+        .post('/api/v1/transactions/purchases/draft')
+        .set(authHeader(token))
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }], idempotencyKey: key })
+        .expect(201);
+
+      const res2 = await request(app.getHttpServer())
+        .post('/api/v1/transactions/purchases/draft')
+        .set(authHeader(token))
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }], idempotencyKey: key })
+        .expect(201);
+
+      expect(res1.body.id).toBe(res2.body.id);
+      // Only one transaction in the DB
+      const count = await prisma.transaction.count({ where: { tenantId } });
+      expect(count).toBe(1);
+    });
+
+    it('submitting without idempotency key always creates a new draft', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const today = new Date().toISOString().split('T')[0];
+
+      const res1 = await request(app.getHttpServer())
+        .post('/api/v1/transactions/purchases/draft')
+        .set(authHeader(token))
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }] })
+        .expect(201);
+
+      const res2 = await request(app.getHttpServer())
+        .post('/api/v1/transactions/purchases/draft')
+        .set(authHeader(token))
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }] })
+        .expect(201);
+
+      expect(res1.body.id).not.toBe(res2.body.id);
+    });
+
+    it('returns 409 when idempotency key has already been used on a POSTED transaction', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      // Client uses the SAME key for both draft creation and posting (typical real-world pattern)
+      const key = uuid();
+      const today = new Date().toISOString().split('T')[0];
+
+      const draft = await request(app.getHttpServer())
+        .post('/api/v1/transactions/purchases/draft')
+        .set(authHeader(token))
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }], idempotencyKey: key })
+        .expect(201);
+
+      // Post with the SAME key — this stores the key on the posted transaction
+      await request(app.getHttpServer())
+        .post(`/api/v1/transactions/${draft.body.id}/post`)
+        .set(authHeader(token))
+        .send({ idempotencyKey: key })
+        .expect(200);
+
+      // Retry draft creation with the same key → should 409 (key now belongs to a POSTED txn)
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/transactions/purchases/draft')
+        .set(authHeader(token))
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }], idempotencyKey: key })
+        .expect(409);
+
+      expect(res.body.message).toContain('idempotency key has already been used for a posted transaction');
+    });
+
+    it('idempotency key works for sale drafts too', async () => {
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const key = uuid();
+      const today = new Date().toISOString().split('T')[0];
+
+      const res1 = await request(app.getHttpServer())
+        .post('/api/v1/transactions/sales/draft')
+        .set(authHeader(token))
+        .send({ customerId: customer.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitPrice: 200 }], idempotencyKey: key })
+        .expect(201);
+
+      const res2 = await request(app.getHttpServer())
+        .post('/api/v1/transactions/sales/draft')
+        .set(authHeader(token))
+        .send({ customerId: customer.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitPrice: 200 }], idempotencyKey: key })
+        .expect(201);
+
+      expect(res1.body.id).toBe(res2.body.id);
+    });
+  });
+
+  // ─── D2: Atomic Document Sequence Table ──────────────────────────────────────
+
+  describe('D2: Atomic Document Sequence Table', () => {
+    it('posting a purchase creates a document_sequences row', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      const txn = await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 1, unitCost: 100 }],
+      });
+
+      const seqRow = await prisma.$queryRaw<Array<{ last_value: number }>>`
+        SELECT last_value FROM document_sequences
+        WHERE tenant_id = ${tenantId}::uuid AND transaction_type = 'PURCHASE'
+      `;
+      expect(seqRow).toHaveLength(1);
+      expect(Number(seqRow[0].last_value)).toBe(1);
+      expect(txn.documentNumber).toContain('PUR');
+    });
+
+    it('two sequential purchases get incremental document numbers', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      const txn1 = await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 1, unitCost: 100 }],
+      });
+      const txn2 = await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ productId: product.id, quantity: 1, unitCost: 100 }],
+      });
+
+      expect(txn1.documentNumber).not.toBe(txn2.documentNumber);
+      const seq1 = parseInt(txn1.documentNumber.split('-')[2]);
+      const seq2 = parseInt(txn2.documentNumber.split('-')[2]);
+      expect(seq2).toBe(seq1 + 1);
+    });
+  });
 });

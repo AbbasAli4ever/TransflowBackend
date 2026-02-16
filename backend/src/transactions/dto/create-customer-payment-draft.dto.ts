@@ -1,4 +1,4 @@
-import { IsUUID, IsInt, Min, IsDateString, IsOptional, MaxLength } from 'class-validator';
+import { IsUUID, IsInt, Min, IsDateString, IsOptional, MaxLength, IsString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateCustomerPaymentDraftDto {
@@ -23,4 +23,10 @@ export class CreateCustomerPaymentDraftDto {
   @IsOptional()
   @MaxLength(1000)
   notes?: string;
+
+  @ApiPropertyOptional({ example: 'client-generated-uuid-v4', maxLength: 64, description: 'Client-supplied idempotency key' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  idempotencyKey?: string;
 }

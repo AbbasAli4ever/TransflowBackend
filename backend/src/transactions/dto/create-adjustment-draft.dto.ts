@@ -28,4 +28,10 @@ export class CreateAdjustmentDraftDto {
   @IsString()
   @MaxLength(1000)
   notes?: string;
+
+  @ApiPropertyOptional({ example: 'client-generated-uuid-v4', maxLength: 64, description: 'Client-supplied idempotency key' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  idempotencyKey?: string;
 }

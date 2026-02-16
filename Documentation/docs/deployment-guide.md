@@ -1,8 +1,5 @@
 # Deployment Guide
 
-> **Status**: This guide outlines the **planned** deployment strategy for the Finance System.
-> **Note**: The actual deployment assets (Dockerfiles, docker-compose configurations, CI/CD pipelines, and backup/restore scripts) for Phase 7d have been **deferred for later implementation**. This guide serves as a blueprint until those assets are created.
-
 ---
 
 ## 1. Overview

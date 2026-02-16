@@ -116,6 +116,7 @@ model Tenant {
   allocations        Allocation[]
   importBatches      ImportBatch[]
   importRows         ImportRow[]
+  documentSequences  DocumentSequence[]
 
   @@map("tenants")
 }
@@ -482,6 +483,17 @@ model ImportRow {
   @@index([tenantId, importBatchId, rowNumber])
   @@index([tenantId, importBatchId, status])
   @@map("import_rows")
+}
+
+model DocumentSequence {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  transactionType String   @map("transaction_type")
+  lastValue       Int      @default(0) @map("last_value")
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, transactionType])
+  @@map("document_sequences")
 }
 
 model StatusChangeLog {

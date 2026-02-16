@@ -9,7 +9,7 @@
 | Item | Location |
 |------|----------|
 | Current Phase | **Phase 7** (Complete) |
-| Next Phase | **N/A** (Final Phase - Hardening Deferred) |
+| Next Phase | **N/A** (Final Phase) |
 | Implementation Plans | `Documentation/IMPLEMENTATION_PLAN*.md` |
 | Domain Specs | `Documentation/docs/` |
 | Backend Code | `backend/` |
@@ -431,15 +431,14 @@ backend/
 - [x] **Phase 7a (Reports Module):** Implemented 9 new analytical endpoints for balances, stock, pending receivables/payables, and statements.
 - [x] **Phase 7b (Dashboard Module):** Implemented the `GET /dashboard/summary` endpoint providing a tenant-wide financial snapshot.
 - [x] **Phase 7c (Import System):** Implemented 6 new endpoints for the full data import lifecycle (Upload, Map, Commit, Rollback, List, Detail) supporting CSV/XLSX.
-- [x] **Hardening (Partial):** Graceful shutdown enabled, global request size limit added, and health check enhanced with version/uptime/DB status.
+- [x] **Phase 7d (Production Hardening):**
+  - [x] Containerization assets (`Dockerfile`, `docker-compose.yml`, `.dockerignore`)
+  - [x] CI/CD configuration (`.github/workflows/ci.yml`)
+  - [x] Backup & restore scripts (`scripts/backup-db.sh`, `scripts/restore-db.sh`)
+  - [x] Final `deployment-guide.md`
+- [x] **Hardening (Partial from previous):** Graceful shutdown enabled, global request size limit added, and health check enhanced with version/uptime/DB status.
 - [x] **Documentation:** `import-guide.md` created and `04-api-spec.md` updated with all new endpoints.
 
-**Deferred for Later Implementation**:
-- [ ] **Phase 7d (Production Hardening):**
-  - [ ] Containerization assets (`Dockerfile`, `docker-compose.yml`, `.dockerignore`)
-  - [ ] CI/CD configuration (`.github/workflows/ci.yml`)
-  - [ ] Backup & restore scripts (`scripts/backup-db.sh`, `scripts/restore-db.sh`)
-  - [ ] Final `deployment-guide.md` (dependent on containerization assets)
 
 ---
 

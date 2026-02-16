@@ -5,6 +5,7 @@ import {
   BadRequestException,
   UnprocessableEntityException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { getContext } from '../common/request-context';
@@ -33,6 +34,9 @@ export class TransactionsService {
     const tenantId = getContext()?.tenantId;
     if (!tenantId) throw new UnauthorizedException();
     const createdBy = getContext()?.userId;
+
+    const existing = await this.checkDraftIdempotency(tenantId, dto.idempotencyKey);
+    if (existing) return existing;
 
     this.assertDateNotFuture(dto.transactionDate);
 
@@ -70,6 +74,7 @@ export class TransactionsService {
           deliveryFee,
           totalAmount,
           notes: dto.notes,
+          idempotencyKey: dto.idempotencyKey,
           createdBy,
         },
       });
@@ -99,6 +104,9 @@ export class TransactionsService {
     const tenantId = getContext()?.tenantId;
     if (!tenantId) throw new UnauthorizedException();
     const createdBy = getContext()?.userId;
+
+    const existing = await this.checkDraftIdempotency(tenantId, dto.idempotencyKey);
+    if (existing) return existing;
 
     this.assertDateNotFuture(dto.transactionDate);
 
@@ -138,6 +146,7 @@ export class TransactionsService {
           deliveryType: dto.deliveryType,
           deliveryAddress: dto.deliveryAddress,
           notes: dto.notes,
+          idempotencyKey: dto.idempotencyKey,
           createdBy,
         },
       });
@@ -243,6 +252,9 @@ export class TransactionsService {
     if (!tenantId) throw new UnauthorizedException();
     const createdBy = getContext()?.userId;
 
+    const existing = await this.checkDraftIdempotency(tenantId, dto.idempotencyKey);
+    if (existing) return existing;
+
     this.assertDateNotFuture(dto.transactionDate);
 
     const supplier = await this.prisma.supplier.findFirst({
@@ -272,6 +284,7 @@ export class TransactionsService {
         totalAmount: dto.amount,
         subtotal: dto.amount,
         notes: dto.notes,
+        idempotencyKey: dto.idempotencyKey,
         createdBy,
       },
     });
@@ -281,6 +294,9 @@ export class TransactionsService {
     const tenantId = getContext()?.tenantId;
     if (!tenantId) throw new UnauthorizedException();
     const createdBy = getContext()?.userId;
+
+    const existing = await this.checkDraftIdempotency(tenantId, dto.idempotencyKey);
+    if (existing) return existing;
 
     this.assertDateNotFuture(dto.transactionDate);
 
@@ -311,6 +327,7 @@ export class TransactionsService {
         totalAmount: dto.amount,
         subtotal: dto.amount,
         notes: dto.notes,
+        idempotencyKey: dto.idempotencyKey,
         createdBy,
       },
     });
@@ -320,6 +337,9 @@ export class TransactionsService {
     const tenantId = getContext()?.tenantId;
     if (!tenantId) throw new UnauthorizedException();
     const createdBy = getContext()?.userId;
+
+    const existing = await this.checkDraftIdempotency(tenantId, dto.idempotencyKey);
+    if (existing) return existing;
 
     this.assertDateNotFuture(dto.transactionDate);
 
@@ -410,6 +430,7 @@ export class TransactionsService {
           subtotal,
           totalAmount: subtotal,
           notes: dto.notes,
+          idempotencyKey: dto.idempotencyKey,
           createdBy,
         },
       });
@@ -439,6 +460,9 @@ export class TransactionsService {
     const tenantId = getContext()?.tenantId;
     if (!tenantId) throw new UnauthorizedException();
     const createdBy = getContext()?.userId;
+
+    const existing = await this.checkDraftIdempotency(tenantId, dto.idempotencyKey);
+    if (existing) return existing;
 
     this.assertDateNotFuture(dto.transactionDate);
 
@@ -529,6 +553,7 @@ export class TransactionsService {
           subtotal,
           totalAmount: subtotal,
           notes: dto.notes,
+          idempotencyKey: dto.idempotencyKey,
           createdBy,
         },
       });
@@ -558,6 +583,9 @@ export class TransactionsService {
     const tenantId = getContext()?.tenantId;
     if (!tenantId) throw new UnauthorizedException();
     const createdBy = getContext()?.userId;
+
+    const existing = await this.checkDraftIdempotency(tenantId, dto.idempotencyKey);
+    if (existing) return existing;
 
     this.assertDateNotFuture(dto.transactionDate);
 
@@ -592,6 +620,7 @@ export class TransactionsService {
         totalAmount: dto.amount,
         subtotal: dto.amount,
         notes: dto.notes,
+        idempotencyKey: dto.idempotencyKey,
         createdBy,
       },
     });
@@ -605,6 +634,9 @@ export class TransactionsService {
     const tenantId = getContext()?.tenantId;
     if (!tenantId) throw new UnauthorizedException();
     const createdBy = getContext()?.userId;
+
+    const existing = await this.checkDraftIdempotency(tenantId, dto.idempotencyKey);
+    if (existing) return existing;
 
     this.assertDateNotFuture(dto.transactionDate);
 
@@ -628,6 +660,7 @@ export class TransactionsService {
           totalAmount: 0,
           subtotal: 0,
           notes: dto.notes,
+          idempotencyKey: dto.idempotencyKey,
           createdBy,
         },
       });
@@ -701,6 +734,19 @@ export class TransactionsService {
   }
 
   // ─── helpers ────────────────────────────────────────────────────────────────
+
+  private async checkDraftIdempotency(tenantId: string, key: string | undefined) {
+    if (!key) return null;
+    const existing = await this.prisma.transaction.findFirst({
+      where: { tenantId, idempotencyKey: key },
+      include: { transactionLines: true },
+    });
+    if (!existing) return null;
+    if (existing.status === 'POSTED') {
+      throw new ConflictException('This idempotency key has already been used for a posted transaction');
+    }
+    return existing; // return existing DRAFT
+  }
 
   private assertDateNotFuture(dateStr: string) {
     const txDateStr = dateStr.split('T')[0];

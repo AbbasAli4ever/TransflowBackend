@@ -118,7 +118,9 @@ export class PostingService {
         },
       );
     } catch (err: any) {
-      if (err.code === 'P2034') {
+      // P2034: serialization failure from Prisma ORM operations
+      // 40001 raw: serialization failure from $queryRaw (document_sequences upsert)
+      if (err.code === 'P2034' || err.meta?.code === '40001' || String(err.message).includes('40001')) {
         throw new ConflictException('Serialization conflict, please retry');
       }
       throw err;
@@ -420,10 +422,15 @@ export class PostingService {
       ADJUSTMENT: 'ADJ',
     };
     const series = String(year);
-    const count = await tx.transaction.count({
-      where: { tenantId, type, series },
-    });
-    const seq = count + 1;
+    // Atomic upsert — prevents sequence gaps/duplicates under concurrent posting
+    const seqResult = await tx.$queryRaw<[{ last_value: number }]>`
+      INSERT INTO document_sequences (id, tenant_id, transaction_type, last_value)
+      VALUES (gen_random_uuid(), ${tenantId}::uuid, ${type}, 1)
+      ON CONFLICT (tenant_id, transaction_type)
+      DO UPDATE SET last_value = document_sequences.last_value + 1
+      RETURNING last_value
+    `;
+    const seq = Number(seqResult[0].last_value);
     const prefix = prefixMap[type] ?? type.substring(0, 3);
     const documentNumber = `${prefix}-${year}-${String(seq).padStart(4, '0')}`;
     return { documentNumber, series };
