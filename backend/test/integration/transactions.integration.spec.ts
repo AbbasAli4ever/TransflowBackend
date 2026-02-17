@@ -59,7 +59,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
         .send({
           supplierId: supplier.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
         })
         .expect(201);
 
@@ -86,7 +86,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
         .send({
           supplierId: supplier.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 2, unitCost: 1000 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 2, unitCost: 1000 }],
           deliveryFee: 200,
         })
         .expect(201);
@@ -105,7 +105,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
         .send({
           supplierId: supplier.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 5, unitCost: 1000, discountAmount: 250 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 1000, discountAmount: 250 }],
         })
         .expect(201);
 
@@ -127,7 +127,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
         .send({
           supplierId: supplier.id,
           transactionDate: futureDate.toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 1, unitCost: 100 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }],
         })
         .expect(400);
     });
@@ -141,7 +141,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
         .send({
           supplierId: uuid(),
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 1, unitCost: 100 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }],
         })
         .expect(404);
     });
@@ -157,12 +157,12 @@ describe('Transactions API — Draft & Read (Integration)', () => {
         .send({
           supplierId: supplier.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 1, unitCost: 100 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }],
         })
         .expect(422);
     });
 
-    it('rejects unknown productId (404)', async () => {
+    it('rejects unknown variantId (404)', async () => {
       const supplier = await createTestSupplier(prisma, tenantId, userId);
 
       await request(app.getHttpServer())
@@ -171,7 +171,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
         .send({
           supplierId: supplier.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: uuid(), quantity: 1, unitCost: 100 }],
+          lines: [{ variantId: uuid(), quantity: 1, unitCost: 100 }],
         })
         .expect(404);
     });
@@ -186,7 +186,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
         .send({
           supplierId: supplier.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 2, unitCost: 100, discountAmount: 300 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 2, unitCost: 100, discountAmount: 300 }],
         })
         .expect(400);
     });
@@ -227,7 +227,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
         .send({
           customerId: customer.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 3, unitPrice: 2000 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 3, unitPrice: 2000 }],
         })
         .expect(201);
 
@@ -253,7 +253,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
         .send({
           customerId: customer.id,
           transactionDate: futureDate.toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 1, unitPrice: 500 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 1, unitPrice: 500 }],
         })
         .expect(400);
     });
@@ -267,7 +267,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
         .send({
           customerId: uuid(),
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 1, unitPrice: 500 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 1, unitPrice: 500 }],
         })
         .expect(404);
     });
@@ -283,7 +283,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
         .send({
           customerId: customer.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 1, unitPrice: 500 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 1, unitPrice: 500 }],
         })
         .expect(422);
     });
@@ -305,7 +305,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
           .send({
             supplierId: supplier.id,
             transactionDate: today,
-            lines: [{ productId: product.id, quantity: 1, unitCost: 100 }],
+            lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }],
           });
       }
 
@@ -327,12 +327,12 @@ describe('Transactions API — Draft & Read (Integration)', () => {
       await request(app.getHttpServer())
         .post('/api/v1/transactions/purchases/draft')
         .set(authHeader(token))
-        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }] });
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }] });
 
       await request(app.getHttpServer())
         .post('/api/v1/transactions/sales/draft')
         .set(authHeader(token))
-        .send({ customerId: customer.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitPrice: 200 }] });
+        .send({ customerId: customer.id, transactionDate: today, lines: [{ variantId: product.variants[0].id, quantity: 1, unitPrice: 200 }] });
 
       const res = await request(app.getHttpServer())
         .get('/api/v1/transactions?type=PURCHASE')
@@ -351,7 +351,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
       await request(app.getHttpServer())
         .post('/api/v1/transactions/purchases/draft')
         .set(authHeader(token))
-        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }] });
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }] });
 
       const res = await request(app.getHttpServer())
         .get('/api/v1/transactions?status=DRAFT')
@@ -372,7 +372,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
       await request(app.getHttpServer())
         .post('/api/v1/transactions/purchases/draft')
         .set(authHeader(token2))
-        .send({ supplierId: supplier2.id, transactionDate: today, lines: [{ productId: product2.id, quantity: 1, unitCost: 100 }] });
+        .send({ supplierId: supplier2.id, transactionDate: today, lines: [{ variantId: product2.variants[0].id, quantity: 1, unitCost: 100 }] });
 
       const res = await request(app.getHttpServer())
         .get('/api/v1/transactions')
@@ -396,7 +396,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
         .send({
           supplierId: supplier.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 5, unitCost: 300 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 300 }],
         })
         .expect(201);
 
@@ -428,7 +428,7 @@ describe('Transactions API — Draft & Read (Integration)', () => {
       const draftRes = await request(app.getHttpServer())
         .post('/api/v1/transactions/purchases/draft')
         .set(authHeader(token2))
-        .send({ supplierId: supplier2.id, transactionDate: today, lines: [{ productId: product2.id, quantity: 1, unitCost: 100 }] })
+        .send({ supplierId: supplier2.id, transactionDate: today, lines: [{ variantId: product2.variants[0].id, quantity: 1, unitCost: 100 }] })
         .expect(201);
 
       await request(app.getHttpServer())
@@ -488,7 +488,7 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
         .send({
           supplierId: supplier.id,
           transactionDate: today(),
-          lines: [{ productId: product.id, quantity: 5, unitCost: 0 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 0 }],
         })
         .expect(400);
     });
@@ -503,7 +503,7 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
         .send({
           supplierId: supplier.id,
           transactionDate: today(),
-          lines: [{ productId: product.id, quantity: 5, unitCost: 1 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 1 }],
         })
         .expect(201);
     });
@@ -518,7 +518,7 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
         .send({
           customerId: customer.id,
           transactionDate: today(),
-          lines: [{ productId: product.id, quantity: 3, unitPrice: 0 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 3, unitPrice: 0 }],
         })
         .expect(400);
     });
@@ -534,7 +534,7 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
         paidNow: 5000,
         paymentAccountId: account.id,
       });
@@ -561,12 +561,12 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
       });
 
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 8, unitPrice: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 8, unitPrice: 1000 }],
       });
       const sourceLineId = sale.transactionLines[0].id;
 
@@ -595,12 +595,12 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
       });
 
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 1000 }],
       });
       const sourceLineId = sale.transactionLines[0].id;
 
@@ -629,12 +629,12 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
       });
 
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 1000 }],
       });
       const sourceLineId = sale.transactionLines[0].id;
 
@@ -669,13 +669,13 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
       // Purchase 5 units
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 500 }],
       });
 
       // Sell 4 units — only 1 unit left in stock
       await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 4, unitPrice: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 4, unitPrice: 1000 }],
       });
 
       const sourceLineId = purchase.transactionLines[0].id;
@@ -706,7 +706,7 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
       // Purchase 10 units, return 3 — stock is 10, sufficient
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
       });
 
       const sourceLineId = purchase.transactionLines[0].id;
@@ -743,7 +743,7 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
         .set(authHeader(token))
         .send({
           transactionDate: today(),
-          lines: [{ productId: product.id, quantity: 5, direction: 'OUT', reason: 'damaged goods' }],
+          lines: [{ variantId: product.variants[0].id, quantity: 5, direction: 'OUT', reason: 'damaged goods' }],
         })
         .expect(201);
 
@@ -761,7 +761,7 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
       // Purchase 10 units to build up stock
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
       });
 
       const draftRes = await request(app.getHttpServer())
@@ -769,7 +769,7 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
         .set(authHeader(token))
         .send({
           transactionDate: today(),
-          lines: [{ productId: product.id, quantity: 5, direction: 'OUT', reason: 'damaged goods' }],
+          lines: [{ variantId: product.variants[0].id, quantity: 5, direction: 'OUT', reason: 'damaged goods' }],
         })
         .expect(201);
 
@@ -791,7 +791,7 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
         .set(authHeader(token))
         .send({
           transactionDate: today(),
-          lines: [{ productId: product.id, quantity: 5, direction: 'IN', reason: 'found stock' }],
+          lines: [{ variantId: product.variants[0].id, quantity: 5, direction: 'IN', reason: 'found stock' }],
         })
         .expect(201);
 
@@ -834,7 +834,7 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
       // Build some stock first (using owner token)
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
       });
 
       // Admin creates the draft (owner token)
@@ -843,7 +843,7 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
         .set(authHeader(token))
         .send({
           transactionDate: today(),
-          lines: [{ productId: product.id, quantity: 3, direction: 'OUT', reason: 'damaged' }],
+          lines: [{ variantId: product.variants[0].id, quantity: 3, direction: 'OUT', reason: 'damaged' }],
         })
         .expect(201);
 
@@ -861,7 +861,7 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
       });
 
       const draftRes = await request(app.getHttpServer())
@@ -869,7 +869,7 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
         .set(authHeader(token))
         .send({
           transactionDate: today(),
-          lines: [{ productId: product.id, quantity: 3, direction: 'OUT', reason: 'damaged' }],
+          lines: [{ variantId: product.variants[0].id, quantity: 3, direction: 'OUT', reason: 'damaged' }],
         })
         .expect(201);
 
@@ -894,7 +894,7 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
       // Build AP balance first
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 1000 }],
       });
 
       // Create supplier payment draft
@@ -921,7 +921,7 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 1000 }],
       });
 
       const draftRes = await request(app.getHttpServer())
@@ -948,12 +948,12 @@ describe('Wave 1 — Posting Engine Invariants (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
       });
 
       await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 1000 }],
       });
 
       const draftRes = await request(app.getHttpServer())

@@ -53,7 +53,7 @@ describe('Posting — SUPPLIER_RETURN (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
       });
 
       const sourceLine = purchase.transactionLines[0];
@@ -95,7 +95,7 @@ describe('Posting — SUPPLIER_RETURN (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier2.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 1000 }],
       });
       const sourceLine = purchase.transactionLines[0];
 
@@ -116,7 +116,7 @@ describe('Posting — SUPPLIER_RETURN (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 3, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 3, unitCost: 1000 }],
       });
       const sourceLine = purchase.transactionLines[0];
 
@@ -168,7 +168,7 @@ describe('Posting — SUPPLIER_RETURN (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
       });
       const sourceLine = purchase.transactionLines[0];
 
@@ -200,7 +200,7 @@ describe('Posting — SUPPLIER_RETURN (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
       });
       const sourceLine = purchase.transactionLines[0];
 
@@ -219,7 +219,7 @@ describe('Posting — SUPPLIER_RETURN (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 2, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 2, unitCost: 1000 }],
       });
       const sourceLine = purchase.transactionLines[0];
 
@@ -249,7 +249,7 @@ describe('Posting — SUPPLIER_RETURN (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
       });
       const sourceLine = purchase.transactionLines[0];
 
@@ -275,7 +275,7 @@ describe('Posting — SUPPLIER_RETURN (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
       });
       const sourceLine = purchase.transactionLines[0];
 
@@ -319,7 +319,7 @@ describe('Posting — SUPPLIER_RETURN (Integration)', () => {
 
       const purchase1 = await createAndPostPurchase(app, token, {
         supplierId: supplier1.id,
-        lines: [{ productId: product1.id, quantity: 5, unitCost: 1000 }],
+        lines: [{ variantId: product1.variants[0].id, quantity: 5, unitCost: 1000 }],
       });
 
       // Tenant2 tries to return a line from tenant1's purchase

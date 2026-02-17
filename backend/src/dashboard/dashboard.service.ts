@@ -108,9 +108,9 @@ export class DashboardService {
         SELECT id FROM products
         WHERE tenant_id = ${tenantId}::uuid AND status = 'ACTIVE'
       ),
-      product_stock AS (
+      variant_stock AS (
         SELECT
-          im.product_id,
+          pv.product_id,
           COALESCE(SUM(CASE
             WHEN im.movement_type = 'PURCHASE_IN'         THEN  im.quantity
             WHEN im.movement_type = 'CUSTOMER_RETURN_IN'  THEN  im.quantity
@@ -126,17 +126,18 @@ export class DashboardService {
             ELSE 0
           END AS avg_cost
         FROM inventory_movements im
+        JOIN product_variants pv ON pv.id = im.variant_id
         WHERE im.tenant_id = ${tenantId}::uuid
           AND im.transaction_date <= ${asOfDate}::date
-        GROUP BY im.product_id
+        GROUP BY pv.product_id
       ),
       ap_with_stock AS (
         SELECT
           ap.id,
-          COALESCE(ps.net_stock, 0) AS net_stock,
-          COALESCE(ps.avg_cost, 0)  AS avg_cost
+          COALESCE(vs.net_stock, 0) AS net_stock,
+          COALESCE(vs.avg_cost, 0)  AS avg_cost
         FROM active_products ap
-        LEFT JOIN product_stock ps ON ps.product_id = ap.id
+        LEFT JOIN variant_stock vs ON vs.product_id = ap.id
       )
       SELECT
         COUNT(*)::int                                    AS "totalProducts",

@@ -107,6 +107,7 @@ model Tenant {
   suppliers          Supplier[]
   customers          Customer[]
   products           Product[]
+  productVariants    ProductVariant[]
   paymentAccounts    PaymentAccount[]
   transactions       Transaction[]
   transactionLines   TransactionLine[]
@@ -139,6 +140,7 @@ model User {
   suppliers           Supplier[]
   customers           Customer[]
   products            Product[]
+  productVariants     ProductVariant[]
   paymentAccounts     PaymentAccount[]
   transactionLines    TransactionLine[]
   inventoryMovements  InventoryMovement[]
@@ -220,19 +222,40 @@ model Product {
   category  String?
   unit      String?  @default("piece")
   status    String   @default("ACTIVE")
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?            @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  variants      ProductVariant[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId, name])
+  @@map("products")
+}
+
+model ProductVariant {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  size      String   @default("one-size")
+  sku       String?
   avgCost   Int      @default(0) @map("avg_cost")
+  status    String   @default("ACTIVE")
   createdBy String?  @map("created_by") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  product            Product             @relation(fields: [productId], references: [id], onDelete: Restrict)
   createdByUser      User?               @relation(fields: [createdBy], references: [id], onDelete: SetNull)
   transactionLines   TransactionLine[]
   inventoryMovements InventoryMovement[]
 
-  @@unique([tenantId, sku])
-  @@index([tenantId, name])
-  @@map("products")
+  @@unique([tenantId, productId, size])
+  @@index([tenantId, productId])
+  @@map("product_variants")
 }
 
 model PaymentAccount {
@@ -315,7 +338,7 @@ model TransactionLine {
   id                      String   @id @default(uuid()) @db.Uuid
   tenantId                String   @map("tenant_id") @db.Uuid
   transactionId           String   @map("transaction_id") @db.Uuid
-  productId               String   @map("product_id") @db.Uuid
+  variantId               String   @map("variant_id") @db.Uuid
   description             String?
   quantity                Int
   unit                    String?
@@ -331,7 +354,7 @@ model TransactionLine {
 
   tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   transaction        Transaction         @relation(fields: [transactionId], references: [id], onDelete: Restrict)
-  product            Product             @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variant            ProductVariant      @relation(fields: [variantId], references: [id], onDelete: Restrict)
   sourceLine         TransactionLine?    @relation("ReturnSourceLine", fields: [sourceTransactionLineId], references: [id], onDelete: Restrict)
   returnLines        TransactionLine[]   @relation("ReturnSourceLine")
   createdByUser      User?               @relation(fields: [createdBy], references: [id], onDelete: SetNull)
@@ -347,7 +370,7 @@ model InventoryMovement {
   tenantId          String       @map("tenant_id") @db.Uuid
   transactionId     String       @map("transaction_id") @db.Uuid
   transactionLineId String?      @map("transaction_line_id") @db.Uuid
-  productId         String       @map("product_id") @db.Uuid
+  variantId         String       @map("variant_id") @db.Uuid
   movementType      MovementType @map("movement_type")
   quantity          Int
   unitCostAtTime    Int          @default(0) @map("unit_cost_at_time")
@@ -359,10 +382,10 @@ model InventoryMovement {
   tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   transaction     Transaction      @relation(fields: [transactionId], references: [id], onDelete: Restrict)
   transactionLine TransactionLine? @relation(fields: [transactionLineId], references: [id], onDelete: Restrict)
-  product         Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variant         ProductVariant   @relation(fields: [variantId], references: [id], onDelete: Restrict)
   createdByUser   User?            @relation(fields: [createdBy], references: [id], onDelete: SetNull)
 
-  @@index([tenantId, productId, transactionDate])
+  @@index([tenantId, variantId, transactionDate])
   @@map("inventory_movements")
 }
 

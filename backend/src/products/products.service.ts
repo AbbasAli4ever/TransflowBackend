@@ -13,6 +13,7 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ListProductsQueryDto } from './dto/list-products-query.dto';
 import { UpdateStatusDto } from '../common/dto/update-status.dto';
+import { CreateProductVariantDto } from './dto/create-product-variant.dto';
 
 @Injectable()
 export class ProductsService {
@@ -25,7 +26,13 @@ export class ProductsService {
 
     try {
       const product = await this.prisma.product.create({
-        data: { tenantId, createdBy, ...dto },
+        data: {
+          tenantId,
+          createdBy,
+          ...dto,
+          variants: { create: [{ tenantId, size: 'one-size', createdBy }] },
+        },
+        include: { variants: { orderBy: { size: 'asc' } } },
       });
       return product;
     } catch (err: any) {
@@ -65,6 +72,7 @@ export class ProductsService {
         skip,
         take: limit,
         orderBy: { name: 'asc' },
+        include: { variants: { orderBy: { size: 'asc' } } },
       }),
       this.prisma.product.count({ where }),
     ]);
@@ -78,6 +86,7 @@ export class ProductsService {
 
     const product = await this.prisma.product.findFirst({
       where: { id, tenantId },
+      include: { variants: { orderBy: { size: 'asc' } } },
     });
     if (!product) throw new NotFoundException('Product not found');
 
@@ -101,6 +110,7 @@ export class ProductsService {
       const updated = await this.prisma.product.update({
         where: { id, tenantId },
         data: dto,
+        include: { variants: { orderBy: { size: 'asc' } } },
       });
       return updated;
     } catch (err: any) {
@@ -118,15 +128,16 @@ export class ProductsService {
     });
     if (!existing) throw new NotFoundException('Product not found');
 
-    // Task 6.2: block deactivation when product has positive stock
+    // Block deactivation when product has positive stock (across any variant)
     if (dto.status === 'INACTIVE') {
       const stockRows = await this.prisma.$queryRaw<Array<{ stock: bigint }>>`
         SELECT COALESCE(SUM(CASE
           WHEN movement_type IN ('PURCHASE_IN', 'CUSTOMER_RETURN_IN', 'ADJUSTMENT_IN') THEN quantity
           ELSE -quantity
         END), 0)::bigint AS stock
-        FROM inventory_movements
-        WHERE tenant_id = ${tenantId}::uuid AND product_id = ${id}::uuid
+        FROM inventory_movements im
+        JOIN product_variants pv ON pv.id = im.variant_id
+        WHERE pv.tenant_id = ${tenantId}::uuid AND pv.product_id = ${id}::uuid
       `;
       if (safeMoney(stockRows[0]?.stock) > 0) {
         throw new BadRequestException('Cannot deactivate product with positive stock');
@@ -157,24 +168,95 @@ export class ProductsService {
 
     const product = await this.prisma.product.findFirst({
       where: { id, tenantId },
+      include: { variants: { where: { status: 'ACTIVE' }, orderBy: { size: 'asc' } } },
     });
     if (!product) throw new NotFoundException('Product not found');
 
-    const result = await this.prisma.$queryRaw<Array<{ stock: bigint }>>`
-      SELECT COALESCE(SUM(CASE
-        WHEN movement_type IN ('PURCHASE_IN', 'CUSTOMER_RETURN_IN', 'ADJUSTMENT_IN') THEN quantity
-        ELSE -quantity
-      END), 0) AS stock
-      FROM inventory_movements
-      WHERE tenant_id = ${tenantId}::uuid AND product_id = ${id}::uuid
-    `;
+    // Per-variant stock
+    const variantStocks = await Promise.all(
+      product.variants.map(async (v) => {
+        const result = await this.prisma.$queryRaw<Array<{ stock: bigint }>>`
+          SELECT COALESCE(SUM(CASE
+            WHEN movement_type IN ('PURCHASE_IN', 'CUSTOMER_RETURN_IN', 'ADJUSTMENT_IN') THEN quantity
+            ELSE -quantity
+          END), 0) AS stock
+          FROM inventory_movements
+          WHERE tenant_id = ${tenantId}::uuid AND variant_id = ${v.id}::uuid
+        `;
+        return {
+          variantId: v.id,
+          size: v.size,
+          sku: v.sku ?? null,
+          currentStock: safeMoney(result[0]?.stock),
+          avgCost: v.avgCost,
+        };
+      }),
+    );
+
+    const totalStock = variantStocks.reduce((sum, v) => sum + v.currentStock, 0);
 
     return {
       productId: id,
       productName: product.name,
-      currentStock: safeMoney(result[0]?.stock),
-      avgCost: product.avgCost,
+      totalStock,
+      variants: variantStocks,
     };
   }
 
+  // ─── Variant management ───────────────────────────────────────────────────
+
+  async addVariant(productId: string, dto: CreateProductVariantDto) {
+    const tenantId = getContext()?.tenantId;
+    if (!tenantId) throw new UnauthorizedException();
+    const createdBy = getContext()?.userId;
+
+    const product = await this.prisma.product.findFirst({
+      where: { id: productId, tenantId },
+    });
+    if (!product) throw new NotFoundException('Product not found');
+
+    try {
+      return await this.prisma.productVariant.create({
+        data: {
+          tenantId,
+          productId,
+          size: dto.size,
+          sku: dto.sku,
+          createdBy,
+        },
+      });
+    } catch (err: any) {
+      if (err.code === 'P2002') throw new ConflictException('A variant with this size already exists for this product');
+      throw err;
+    }
+  }
+
+  async updateVariantStatus(productId: string, variantId: string, dto: UpdateStatusDto) {
+    const tenantId = getContext()?.tenantId;
+    if (!tenantId) throw new UnauthorizedException();
+
+    const variant = await this.prisma.productVariant.findFirst({
+      where: { id: variantId, productId, tenantId },
+    });
+    if (!variant) throw new NotFoundException('Variant not found');
+
+    if (dto.status === 'INACTIVE') {
+      const stockRows = await this.prisma.$queryRaw<Array<{ stock: bigint }>>`
+        SELECT COALESCE(SUM(CASE
+          WHEN movement_type IN ('PURCHASE_IN', 'CUSTOMER_RETURN_IN', 'ADJUSTMENT_IN') THEN quantity
+          ELSE -quantity
+        END), 0)::bigint AS stock
+        FROM inventory_movements
+        WHERE tenant_id = ${tenantId}::uuid AND variant_id = ${variantId}::uuid
+      `;
+      if (safeMoney(stockRows[0]?.stock) > 0) {
+        throw new BadRequestException('Cannot deactivate variant with positive stock');
+      }
+    }
+
+    return this.prisma.productVariant.update({
+      where: { id: variantId },
+      data: { status: dto.status },
+    });
+  }
 }

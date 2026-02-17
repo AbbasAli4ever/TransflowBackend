@@ -50,6 +50,7 @@ Transaction (Event) → Posting Engine → Truth Tables (Entries)
 | 5 | Payments + Allocations | ✅ Complete | Standalone payments, allocation system |
  | 6 | Returns + Transfers | ✅ Complete | Returns with strict rules, internal transfers | 
 | 7 | Queries + Hardening | ✅ Complete | Reports, Dashboard, & Imports complete; Hardening deferred |
+| 8 | [Product Variants](Documentation/progress/20260217-ProductVariants-ProgressReport.md) | ✅ Complete | Schema change for product variants and data migration |
 ### Phase Documentation Locations
 
 ```

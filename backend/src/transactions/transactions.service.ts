@@ -83,7 +83,7 @@ export class TransactionsService {
         data: processedLines.map((line) => ({
           tenantId,
           transactionId: txn.id,
-          productId: line.productId,
+          variantId: line.variantId,
           quantity: line.quantity,
           unitCost: line.unitCost,
           discountAmount: line.discountAmount,
@@ -95,7 +95,7 @@ export class TransactionsService {
 
       return tx.transaction.findFirst({
         where: { id: txn.id },
-        include: { transactionLines: true },
+        include: { transactionLines: { include: { variant: true } } },
       });
     });
   }
@@ -155,7 +155,7 @@ export class TransactionsService {
         data: processedLines.map((line) => ({
           tenantId,
           transactionId: txn.id,
-          productId: line.productId,
+          variantId: line.variantId,
           quantity: line.quantity,
           unitPrice: line.unitPrice,
           discountAmount: line.discountAmount,
@@ -167,7 +167,7 @@ export class TransactionsService {
 
       return tx.transaction.findFirst({
         where: { id: txn.id },
-        include: { transactionLines: true },
+        include: { transactionLines: { include: { variant: true } } },
       });
     });
   }
@@ -220,7 +220,7 @@ export class TransactionsService {
         skip,
         take: limit,
         orderBy: { [sortBy]: sortOrder },
-        include: { transactionLines: true },
+        include: { transactionLines: { include: { variant: true } } },
       }),
       this.prisma.transaction.count({ where }),
     ]);
@@ -235,7 +235,7 @@ export class TransactionsService {
     const transaction = await this.prisma.transaction.findFirst({
       where: { id, tenantId },
       include: {
-        transactionLines: { include: { product: true } },
+        transactionLines: { include: { variant: { include: { product: true } } } },
         inventoryMovements: true,
         ledgerEntries: true,
         paymentEntries: true,
@@ -361,7 +361,7 @@ export class TransactionsService {
 
     const processedLines: Array<{
       sourceTransactionLineId: string;
-      productId: string;
+      variantId: string;
       quantity: number;
       unitCost: number;
       lineTotal: number;
@@ -410,7 +410,7 @@ export class TransactionsService {
         : (sourceLine.unitCost ?? 0);
       processedLines.push({
         sourceTransactionLineId: line.sourceTransactionLineId,
-        productId: sourceLine.productId,
+        variantId: sourceLine.variantId,
         quantity: line.quantity,
         unitCost: effectiveUnitCost,
         lineTotal: line.quantity * effectiveUnitCost,
@@ -439,7 +439,7 @@ export class TransactionsService {
         data: processedLines.map((line) => ({
           tenantId,
           transactionId: txn.id,
-          productId: line.productId,
+          variantId: line.variantId,
           quantity: line.quantity,
           unitCost: line.unitCost,
           lineTotal: line.lineTotal,
@@ -451,7 +451,7 @@ export class TransactionsService {
 
       return tx.transaction.findFirst({
         where: { id: txn.id },
-        include: { transactionLines: true },
+        include: { transactionLines: { include: { variant: true } } },
       });
     });
   }
@@ -484,7 +484,7 @@ export class TransactionsService {
 
     const processedLines: Array<{
       sourceTransactionLineId: string;
-      productId: string;
+      variantId: string;
       quantity: number;
       unitPrice: number;
       lineTotal: number;
@@ -533,7 +533,7 @@ export class TransactionsService {
         : (sourceLine.unitPrice ?? 0);
       processedLines.push({
         sourceTransactionLineId: line.sourceTransactionLineId,
-        productId: sourceLine.productId,
+        variantId: sourceLine.variantId,
         quantity: line.quantity,
         unitPrice: effectiveUnitPrice,
         lineTotal: line.quantity * effectiveUnitPrice,
@@ -562,7 +562,7 @@ export class TransactionsService {
         data: processedLines.map((line) => ({
           tenantId,
           transactionId: txn.id,
-          productId: line.productId,
+          variantId: line.variantId,
           quantity: line.quantity,
           unitPrice: line.unitPrice,
           lineTotal: line.lineTotal,
@@ -574,7 +574,7 @@ export class TransactionsService {
 
       return tx.transaction.findFirst({
         where: { id: txn.id },
-        include: { transactionLines: true },
+        include: { transactionLines: { include: { variant: true } } },
       });
     });
   }
@@ -641,12 +641,16 @@ export class TransactionsService {
     this.assertDateNotFuture(dto.transactionDate);
 
     for (const line of dto.lines) {
-      const product = await this.prisma.product.findFirst({
-        where: { id: line.productId, tenantId },
+      const variant = await this.prisma.productVariant.findFirst({
+        where: { id: line.variantId, tenantId },
+        include: { product: true },
       });
-      if (!product) throw new NotFoundException(`Product ${line.productId} not found`);
-      if (product.status !== 'ACTIVE') {
-        throw new UnprocessableEntityException(`Product ${product.name} is not active`);
+      if (!variant) throw new NotFoundException(`Variant ${line.variantId} not found`);
+      if (variant.status !== 'ACTIVE') {
+        throw new UnprocessableEntityException(`Variant (size ${variant.size}) is not active`);
+      }
+      if (variant.product.status !== 'ACTIVE') {
+        throw new UnprocessableEntityException(`Product ${variant.product.name} is not active`);
       }
     }
 
@@ -669,7 +673,7 @@ export class TransactionsService {
         data: dto.lines.map((line) => ({
           tenantId,
           transactionId: txn.id,
-          productId: line.productId,
+          variantId: line.variantId,
           quantity: line.quantity,
           lineTotal: 0,
           costTotal: 0,
@@ -681,7 +685,7 @@ export class TransactionsService {
 
       return tx.transaction.findFirst({
         where: { id: txn.id },
-        include: { transactionLines: true },
+        include: { transactionLines: { include: { variant: true } } },
       });
     });
   }
@@ -739,7 +743,7 @@ export class TransactionsService {
     if (!key) return null;
     const existing = await this.prisma.transaction.findFirst({
       where: { tenantId, idempotencyKey: key },
-      include: { transactionLines: true },
+      include: { transactionLines: { include: { variant: true } } },
     });
     if (!existing) return null;
     if (existing.status === 'POSTED') {
@@ -762,26 +766,32 @@ export class TransactionsService {
   ) {
     const processed = [];
     for (const line of lines) {
-      const product = await this.prisma.product.findFirst({
-        where: { id: line.productId, tenantId },
+      const variant = await this.prisma.productVariant.findFirst({
+        where: { id: line.variantId, tenantId },
+        include: { product: true },
       });
-      if (!product) {
-        throw new NotFoundException(`Product ${line.productId} not found`);
+      if (!variant) {
+        throw new NotFoundException(`Variant ${line.variantId} not found`);
       }
-      if (product.status !== 'ACTIVE') {
+      if (variant.status !== 'ACTIVE') {
         throw new UnprocessableEntityException(
-          `Product ${product.name} is not active`,
+          `Variant (size ${variant.size}) of product ${variant.product.name} is not active`,
+        );
+      }
+      if (variant.product.status !== 'ACTIVE') {
+        throw new UnprocessableEntityException(
+          `Product ${variant.product.name} is not active`,
         );
       }
       const discountAmount = line.discountAmount ?? 0;
       const maxDiscount = line.quantity * line.unitCost;
       if (discountAmount > maxDiscount) {
         throw new BadRequestException(
-          `Discount amount for product ${product.name} exceeds line total`,
+          `Discount amount for variant ${variant.size} of ${variant.product.name} exceeds line total`,
         );
       }
       processed.push({
-        productId: line.productId,
+        variantId: line.variantId,
         quantity: line.quantity,
         unitCost: line.unitCost,
         discountAmount,
@@ -797,26 +807,32 @@ export class TransactionsService {
   ) {
     const processed = [];
     for (const line of lines) {
-      const product = await this.prisma.product.findFirst({
-        where: { id: line.productId, tenantId },
+      const variant = await this.prisma.productVariant.findFirst({
+        where: { id: line.variantId, tenantId },
+        include: { product: true },
       });
-      if (!product) {
-        throw new NotFoundException(`Product ${line.productId} not found`);
+      if (!variant) {
+        throw new NotFoundException(`Variant ${line.variantId} not found`);
       }
-      if (product.status !== 'ACTIVE') {
+      if (variant.status !== 'ACTIVE') {
         throw new UnprocessableEntityException(
-          `Product ${product.name} is not active`,
+          `Variant (size ${variant.size}) of product ${variant.product.name} is not active`,
+        );
+      }
+      if (variant.product.status !== 'ACTIVE') {
+        throw new UnprocessableEntityException(
+          `Product ${variant.product.name} is not active`,
         );
       }
       const discountAmount = line.discountAmount ?? 0;
       const maxDiscount = line.quantity * line.unitPrice;
       if (discountAmount > maxDiscount) {
         throw new BadRequestException(
-          `Discount amount for product ${product.name} exceeds line total`,
+          `Discount amount for variant ${variant.size} of ${variant.product.name} exceeds line total`,
         );
       }
       processed.push({
-        productId: line.productId,
+        variantId: line.variantId,
         quantity: line.quantity,
         unitPrice: line.unitPrice,
         discountAmount,

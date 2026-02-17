@@ -44,7 +44,7 @@ describe('Posting — ADJUSTMENT (Integration)', () => {
   });
 
   async function createAndPostAdjustment(
-    lines: Array<{ productId: string; quantity: number; direction: 'IN' | 'OUT'; reason: string }>,
+    lines: Array<{ variantId: string; quantity: number; direction: 'IN' | 'OUT'; reason: string }>,
     idempotencyKey?: string,
   ) {
     const transactionDate = new Date().toISOString().split('T')[0];
@@ -75,7 +75,7 @@ describe('Posting — ADJUSTMENT (Integration)', () => {
         .set(authHeader(token))
         .send({
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 5, direction: 'IN', reason: 'Stock found' }],
+          lines: [{ variantId: product.variants[0].id, quantity: 5, direction: 'IN', reason: 'Stock found' }],
         })
         .expect(201);
 
@@ -101,18 +101,18 @@ describe('Posting — ADJUSTMENT (Integration)', () => {
         .set(authHeader(staffToken))
         .send({
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 1, direction: 'IN', reason: 'test' }],
+          lines: [{ variantId: product.variants[0].id, quantity: 1, direction: 'IN', reason: 'test' }],
         })
         .expect(403);
     });
 
-    it('returns 404 for unknown product', async () => {
+    it('returns 404 for unknown variant', async () => {
       await request(app.getHttpServer())
         .post('/api/v1/transactions/adjustments/draft')
         .set(authHeader(token))
         .send({
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: uuid(), quantity: 1, direction: 'IN', reason: 'test' }],
+          lines: [{ variantId: uuid(), quantity: 1, direction: 'IN', reason: 'test' }],
         })
         .expect(404);
     });
@@ -127,7 +127,7 @@ describe('Posting — ADJUSTMENT (Integration)', () => {
         .set(authHeader(token))
         .send({
           transactionDate: future.toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 1, direction: 'IN', reason: 'test' }],
+          lines: [{ variantId: product.variants[0].id, quantity: 1, direction: 'IN', reason: 'test' }],
         })
         .expect(400);
     });
@@ -139,7 +139,7 @@ describe('Posting — ADJUSTMENT (Integration)', () => {
         .post('/api/v1/transactions/adjustments/draft')
         .send({
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 1, direction: 'IN', reason: 'test' }],
+          lines: [{ variantId: product.variants[0].id, quantity: 1, direction: 'IN', reason: 'test' }],
         })
         .expect(401);
     });
@@ -152,7 +152,7 @@ describe('Posting — ADJUSTMENT (Integration)', () => {
         .set(authHeader(token))
         .send({
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 1, direction: 'SIDEWAYS', reason: 'test' }],
+          lines: [{ variantId: product.variants[0].id, quantity: 1, direction: 'SIDEWAYS', reason: 'test' }],
         })
         .expect(400);
     });
@@ -165,7 +165,7 @@ describe('Posting — ADJUSTMENT (Integration)', () => {
       const product = await createTestProduct(prisma, tenantId, userId);
 
       const adj = await createAndPostAdjustment([
-        { productId: product.id, quantity: 10, direction: 'IN', reason: 'Found extra stock' },
+        { variantId: product.variants[0].id, quantity: 10, direction: 'IN', reason: 'Found extra stock' },
       ]);
 
       expect(adj.status).toBe('POSTED');
@@ -187,11 +187,11 @@ describe('Posting — ADJUSTMENT (Integration)', () => {
       // Seed stock before adjustment OUT
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 100 }],
       });
 
       const adj = await createAndPostAdjustment([
-        { productId: product.id, quantity: 5, direction: 'OUT', reason: 'Damaged goods written off' },
+        { variantId: product.variants[0].id, quantity: 5, direction: 'OUT', reason: 'Damaged goods written off' },
       ]);
 
       const movements = await prisma.inventoryMovement.findMany({ where: { transactionId: adj.id } });
@@ -211,12 +211,12 @@ describe('Posting — ADJUSTMENT (Integration)', () => {
       // Seed stock for product2 before adjustment OUT
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product2.id, quantity: 10, unitCost: 100 }],
+        lines: [{ variantId: product2.variants[0].id, quantity: 10, unitCost: 100 }],
       });
 
       const adj = await createAndPostAdjustment([
-        { productId: product1.id, quantity: 3, direction: 'IN', reason: 'Found' },
-        { productId: product2.id, quantity: 2, direction: 'OUT', reason: 'Damaged' },
+        { variantId: product1.variants[0].id, quantity: 3, direction: 'IN', reason: 'Found' },
+        { variantId: product2.variants[0].id, quantity: 2, direction: 'OUT', reason: 'Damaged' },
       ]);
 
       const movements = await prisma.inventoryMovement.findMany({
@@ -238,7 +238,7 @@ describe('Posting — ADJUSTMENT (Integration)', () => {
       const product = await createTestProduct(prisma, tenantId, userId);
 
       const adj = await createAndPostAdjustment([
-        { productId: product.id, quantity: 1, direction: 'IN', reason: 'test' },
+        { variantId: product.variants[0].id, quantity: 1, direction: 'IN', reason: 'test' },
       ]);
 
       const year = new Date().getFullYear();
@@ -261,7 +261,7 @@ describe('Posting — ADJUSTMENT (Integration)', () => {
         .set(authHeader(adminToken))
         .send({
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 1, direction: 'IN', reason: 'Admin adjustment' }],
+          lines: [{ variantId: product.variants[0].id, quantity: 1, direction: 'IN', reason: 'Admin adjustment' }],
         })
         .expect(201);
 
@@ -277,7 +277,7 @@ describe('Posting — ADJUSTMENT (Integration)', () => {
         .set(authHeader(token))
         .send({
           transactionDate,
-          lines: [{ productId: product.id, quantity: 1, direction: 'IN', reason: 'test' }],
+          lines: [{ variantId: product.variants[0].id, quantity: 1, direction: 'IN', reason: 'test' }],
         })
         .expect(201);
 

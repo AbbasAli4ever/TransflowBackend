@@ -45,14 +45,14 @@ describe('Posting — SALE (Integration)', () => {
     await app.close();
   });
 
-  async function createSaleDraft(customerId: string, productId: string, qty: number, unitPrice: number) {
+  async function createSaleDraft(customerId: string, variantId: string, qty: number, unitPrice: number) {
     const res = await request(app.getHttpServer())
       .post('/api/v1/transactions/sales/draft')
       .set(authHeader(token))
       .send({
         customerId,
         transactionDate: new Date().toISOString().split('T')[0],
-        lines: [{ productId, quantity: qty, unitPrice }],
+        lines: [{ variantId, quantity: qty, unitPrice }],
       })
       .expect(201);
     return res.body;
@@ -69,10 +69,10 @@ describe('Posting — SALE (Integration)', () => {
       // First stock up
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 20, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 20, unitCost: 500 }],
       });
 
-      const saleDraft = await createSaleDraft(customer.id, product.id, 5, 800);
+      const saleDraft = await createSaleDraft(customer.id, product.variants[0].id, 5, 800);
 
       const res = await request(app.getHttpServer())
         .post(`/api/v1/transactions/${saleDraft.id}/post`)
@@ -95,14 +95,14 @@ describe('Posting — SALE (Integration)', () => {
       // Purchase 10 units @ 600
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 600 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 600 }],
       });
 
-      // Verify avgCost is set
-      const updatedProduct = await prisma.product.findFirst({ where: { id: product.id } });
-      expect(updatedProduct!.avgCost).toBe(600);
+      // Verify avgCost is set on the variant
+      const updatedVariant = await prisma.productVariant.findFirst({ where: { productId: product.id } });
+      expect(updatedVariant!.avgCost).toBe(600);
 
-      const saleDraft = await createSaleDraft(customer.id, product.id, 3, 1000);
+      const saleDraft = await createSaleDraft(customer.id, product.variants[0].id, 3, 1000);
       const res = await request(app.getHttpServer())
         .post(`/api/v1/transactions/${saleDraft.id}/post`)
         .set(authHeader(token))
@@ -122,10 +122,10 @@ describe('Posting — SALE (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 300 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 300 }],
       });
 
-      const saleDraft = await createSaleDraft(customer.id, product.id, 5, 700);
+      const saleDraft = await createSaleDraft(customer.id, product.variants[0].id, 5, 700);
       const res = await request(app.getHttpServer())
         .post(`/api/v1/transactions/${saleDraft.id}/post`)
         .set(authHeader(token))
@@ -146,10 +146,10 @@ describe('Posting — SALE (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 300 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 300 }],
       });
 
-      const saleDraft = await createSaleDraft(customer.id, product.id, 4, 600);
+      const saleDraft = await createSaleDraft(customer.id, product.variants[0].id, 4, 600);
       const res = await request(app.getHttpServer())
         .post(`/api/v1/transactions/${saleDraft.id}/post`)
         .set(authHeader(token))
@@ -175,7 +175,7 @@ describe('Posting — SALE (Integration)', () => {
       const customer = await createTestCustomer(prisma, tenantId, userId);
       const product = await createTestProduct(prisma, tenantId, userId);
 
-      const saleDraft = await createSaleDraft(customer.id, product.id, 5, 1000);
+      const saleDraft = await createSaleDraft(customer.id, product.variants[0].id, 5, 1000);
 
       const res = await request(app.getHttpServer())
         .post(`/api/v1/transactions/${saleDraft.id}/post`)
@@ -185,7 +185,7 @@ describe('Posting — SALE (Integration)', () => {
 
       expect(res.body.message).toContain('Insufficient stock');
       expect(res.body.errors).toHaveLength(1);
-      expect(res.body.errors[0].productId).toBe(product.id);
+      expect(res.body.errors[0].variantId).toBe(product.variants[0].id);
       expect(res.body.errors[0].available).toBe(0);
       expect(res.body.errors[0].required).toBe(5);
     });
@@ -198,10 +198,10 @@ describe('Posting — SALE (Integration)', () => {
       // Stock up 3 units
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 3, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 3, unitCost: 500 }],
       });
 
-      const saleDraft = await createSaleDraft(customer.id, product.id, 5, 700);
+      const saleDraft = await createSaleDraft(customer.id, product.variants[0].id, 5, 700);
       const res = await request(app.getHttpServer())
         .post(`/api/v1/transactions/${saleDraft.id}/post`)
         .set(authHeader(token))
@@ -224,8 +224,8 @@ describe('Posting — SALE (Integration)', () => {
           customerId: customer.id,
           transactionDate: new Date().toISOString().split('T')[0],
           lines: [
-            { productId: product1.id, quantity: 5, unitPrice: 500 },
-            { productId: product2.id, quantity: 3, unitPrice: 700 },
+            { variantId: product1.variants[0].id, quantity: 5, unitPrice: 500 },
+            { variantId: product2.variants[0].id, quantity: 3, unitPrice: 700 },
           ],
         })
         .expect(201);
@@ -246,10 +246,10 @@ describe('Posting — SALE (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 400 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 400 }],
       });
 
-      const saleDraft = await createSaleDraft(customer.id, product.id, 5, 600);
+      const saleDraft = await createSaleDraft(customer.id, product.variants[0].id, 5, 600);
       await request(app.getHttpServer())
         .post(`/api/v1/transactions/${saleDraft.id}/post`)
         .set(authHeader(token))
@@ -260,7 +260,7 @@ describe('Posting — SALE (Integration)', () => {
     it('transaction is NOT posted when stock check fails (rollback)', async () => {
       const customer = await createTestCustomer(prisma, tenantId, userId);
       const product = await createTestProduct(prisma, tenantId, userId);
-      const saleDraft = await createSaleDraft(customer.id, product.id, 10, 500);
+      const saleDraft = await createSaleDraft(customer.id, product.variants[0].id, 10, 500);
 
       await request(app.getHttpServer())
         .post(`/api/v1/transactions/${saleDraft.id}/post`)
@@ -288,10 +288,10 @@ describe('Posting — SALE (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 300 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 300 }],
       });
 
-      const saleDraft = await createSaleDraft(customer.id, product.id, 2, 500);
+      const saleDraft = await createSaleDraft(customer.id, product.variants[0].id, 2, 500);
       const res = await request(app.getHttpServer())
         .post(`/api/v1/transactions/${saleDraft.id}/post`)
         .set(authHeader(token))
@@ -310,11 +310,11 @@ describe('Posting — SALE (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 20, unitCost: 300 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 20, unitCost: 300 }],
       });
       expect(purchase.documentNumber).toBe(`PUR-${year}-0001`);
 
-      const saleDraft = await createSaleDraft(customer.id, product.id, 5, 500);
+      const saleDraft = await createSaleDraft(customer.id, product.variants[0].id, 5, 500);
       const saleRes = await request(app.getHttpServer())
         .post(`/api/v1/transactions/${saleDraft.id}/post`)
         .set(authHeader(token))

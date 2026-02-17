@@ -64,7 +64,7 @@ describe('Remediation Round 2 (Integration)', () => {
       // 10 units × 1000 = 10000, discount 1000 → lineTotal 9000
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 1000, discountAmount: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000, discountAmount: 1000 }],
       });
 
       const sourceLine = purchase.transactionLines[0];
@@ -90,7 +90,7 @@ describe('Remediation Round 2 (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
       });
 
       const sourceLine = purchase.transactionLines[0];
@@ -116,13 +116,13 @@ describe('Remediation Round 2 (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 20, unitCost: 400 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 20, unitCost: 400 }],
       });
 
       // 10 units × 1000 = 10000, discount 1000 → lineTotal 9000
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 10, unitPrice: 1000, discountAmount: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitPrice: 1000, discountAmount: 1000 }],
       });
 
       const sourceLine = sale.transactionLines[0];
@@ -154,12 +154,12 @@ describe('Remediation Round 2 (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 20, unitCost: 200 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 20, unitCost: 200 }],
       });
 
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 10, unitPrice: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitPrice: 500 }],
       });
 
       // Payment: 2000
@@ -213,12 +213,12 @@ describe('Remediation Round 2 (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 200 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 200 }],
       });
 
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 400 }], // total 2000
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 400 }], // total 2000
       });
 
       // Partial payment: 500
@@ -253,7 +253,7 @@ describe('Remediation Round 2 (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 300 }], // total 3000
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 300 }], // total 3000
       });
 
       // Partial payment: 1000
@@ -292,7 +292,7 @@ describe('Remediation Round 2 (Integration)', () => {
       // Stock up
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 50, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 50, unitCost: 100 }],
       });
 
       // Overdue invoice: 40 days ago → outstanding 500
@@ -303,13 +303,13 @@ describe('Remediation Round 2 (Integration)', () => {
       await createAndPostSale(app, token, {
         customerId: customer.id,
         transactionDate: overdueDateStr,
-        lines: [{ productId: product.id, quantity: 1, unitPrice: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 1, unitPrice: 500 }],
       });
 
       // Current invoice: today → outstanding 1000
       await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 2, unitPrice: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 2, unitPrice: 500 }],
       });
 
       const today = new Date().toISOString().split('T')[0];
@@ -415,7 +415,7 @@ describe('Remediation Round 2 (Integration)', () => {
       // Create a payment entry (history) for this account by posting a purchase+payment
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 1, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }],
       });
 
       await createAndPostSupplierPayment(app, token, {
@@ -777,13 +777,13 @@ describe('Remediation Round 2 (Integration)', () => {
       const res1 = await request(app.getHttpServer())
         .post('/api/v1/transactions/purchases/draft')
         .set(authHeader(token))
-        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }], idempotencyKey: key })
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }], idempotencyKey: key })
         .expect(201);
 
       const res2 = await request(app.getHttpServer())
         .post('/api/v1/transactions/purchases/draft')
         .set(authHeader(token))
-        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }], idempotencyKey: key })
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }], idempotencyKey: key })
         .expect(201);
 
       expect(res1.body.id).toBe(res2.body.id);
@@ -800,13 +800,13 @@ describe('Remediation Round 2 (Integration)', () => {
       const res1 = await request(app.getHttpServer())
         .post('/api/v1/transactions/purchases/draft')
         .set(authHeader(token))
-        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }] })
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }] })
         .expect(201);
 
       const res2 = await request(app.getHttpServer())
         .post('/api/v1/transactions/purchases/draft')
         .set(authHeader(token))
-        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }] })
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }] })
         .expect(201);
 
       expect(res1.body.id).not.toBe(res2.body.id);
@@ -822,7 +822,7 @@ describe('Remediation Round 2 (Integration)', () => {
       const draft = await request(app.getHttpServer())
         .post('/api/v1/transactions/purchases/draft')
         .set(authHeader(token))
-        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }], idempotencyKey: key })
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }], idempotencyKey: key })
         .expect(201);
 
       // Post with the SAME key — this stores the key on the posted transaction
@@ -836,7 +836,7 @@ describe('Remediation Round 2 (Integration)', () => {
       const res = await request(app.getHttpServer())
         .post('/api/v1/transactions/purchases/draft')
         .set(authHeader(token))
-        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }], idempotencyKey: key })
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }], idempotencyKey: key })
         .expect(409);
 
       expect(res.body.message).toContain('idempotency key has already been used for a posted transaction');
@@ -851,13 +851,13 @@ describe('Remediation Round 2 (Integration)', () => {
       const res1 = await request(app.getHttpServer())
         .post('/api/v1/transactions/sales/draft')
         .set(authHeader(token))
-        .send({ customerId: customer.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitPrice: 200 }], idempotencyKey: key })
+        .send({ customerId: customer.id, transactionDate: today, lines: [{ variantId: product.variants[0].id, quantity: 1, unitPrice: 200 }], idempotencyKey: key })
         .expect(201);
 
       const res2 = await request(app.getHttpServer())
         .post('/api/v1/transactions/sales/draft')
         .set(authHeader(token))
-        .send({ customerId: customer.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitPrice: 200 }], idempotencyKey: key })
+        .send({ customerId: customer.id, transactionDate: today, lines: [{ variantId: product.variants[0].id, quantity: 1, unitPrice: 200 }], idempotencyKey: key })
         .expect(201);
 
       expect(res1.body.id).toBe(res2.body.id);
@@ -873,7 +873,7 @@ describe('Remediation Round 2 (Integration)', () => {
 
       const txn = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 1, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }],
       });
 
       const seqRow = await prisma.$queryRaw<Array<{ last_value: number }>>`
@@ -891,11 +891,11 @@ describe('Remediation Round 2 (Integration)', () => {
 
       const txn1 = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 1, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }],
       });
       const txn2 = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 1, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }],
       });
 
       expect(txn1.documentNumber).not.toBe(txn2.documentNumber);

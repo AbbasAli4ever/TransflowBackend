@@ -149,7 +149,8 @@ export async function createTestCustomer(
 }
 
 /**
- * Create a test product
+ * Create a test product with a default 'one-size' variant.
+ * Returns the product with `variants` included — use `product.variants[0].id` as variantId.
  */
 export async function createTestProduct(
   prisma: PrismaClient,
@@ -172,9 +173,12 @@ export async function createTestProduct(
       sku: options.sku,
       category: options.category,
       unit: options.unit || 'piece',
-      avgCost: options.avgCost || 0,
       createdBy,
+      variants: {
+        create: [{ tenantId, size: 'one-size', avgCost: options.avgCost || 0, createdBy }],
+      },
     },
+    include: { variants: true },
   });
 }
 
@@ -257,7 +261,7 @@ export async function createAndPostPurchase(
   token: string,
   options: {
     supplierId: string;
-    lines: Array<{ productId: string; quantity: number; unitCost: number; discountAmount?: number }>;
+    lines: Array<{ variantId: string; quantity: number; unitCost: number; discountAmount?: number }>;
     transactionDate?: string;
     deliveryFee?: number;
     paidNow?: number;
@@ -449,7 +453,7 @@ export async function createAndPostSale(
   token: string,
   options: {
     customerId: string;
-    lines: Array<{ productId: string; quantity: number; unitPrice: number; discountAmount?: number }>;
+    lines: Array<{ variantId: string; quantity: number; unitPrice: number; discountAmount?: number }>;
     transactionDate?: string;
     deliveryFee?: number;
     receivedNow?: number;

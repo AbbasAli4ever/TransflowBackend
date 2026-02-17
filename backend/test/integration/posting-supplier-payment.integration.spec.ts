@@ -162,7 +162,7 @@ describe('Posting — SUPPLIER_PAYMENT (Integration)', () => {
       // Create a posted purchase for 10,000
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
       });
 
       // Pay 10,000
@@ -209,12 +209,12 @@ describe('Posting — SUPPLIER_PAYMENT (Integration)', () => {
       // Two purchases: 3000 and 5000
       const purchase1 = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 3, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 3, unitCost: 1000 }],
         transactionDate: new Date(Date.now() - 86400000).toISOString().split('T')[0], // yesterday
       });
       const purchase2 = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 1000 }],
       });
 
       // Pay 7000 — should fully cover purchase1 (3000) and partially cover purchase2 (4000)
@@ -246,7 +246,7 @@ describe('Posting — SUPPLIER_PAYMENT (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 1, unitCost: 3000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 3000 }],
       });
 
       // Pay more than outstanding
@@ -292,11 +292,11 @@ describe('Posting — SUPPLIER_PAYMENT (Integration)', () => {
 
       const purchase1 = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 3, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 3, unitCost: 1000 }],
       });
       const purchase2 = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 1000 }],
       });
 
       const payment = await createAndPostSupplierPayment(app, token, {
@@ -327,7 +327,7 @@ describe('Posting — SUPPLIER_PAYMENT (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 2, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 2, unitCost: 1000 }],
       });
 
       // Draft a payment
@@ -360,11 +360,11 @@ describe('Posting — SUPPLIER_PAYMENT (Integration)', () => {
 
       const purchase1 = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 1000 }],
       });
       const purchase2 = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 1000 }],
       });
 
       const draftRes = await request(app.getHttpServer())
@@ -401,7 +401,7 @@ describe('Posting — SUPPLIER_PAYMENT (Integration)', () => {
       // Purchase belongs to supplier2
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier2.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 1000 }],
       });
 
       const draftRes = await request(app.getHttpServer())

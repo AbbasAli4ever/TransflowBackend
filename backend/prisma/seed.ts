@@ -79,8 +79,16 @@ async function seed() {
         sku: 'SUIT-BLK-001',
         category: 'Suits',
         unit: 'piece',
-        avgCost: 0,
         createdBy: user.id,
+        variants: {
+          create: [
+            { tenantId: tenant.id, size: 'S',   createdBy: user.id },
+            { tenantId: tenant.id, size: 'M',   createdBy: user.id },
+            { tenantId: tenant.id, size: 'L',   createdBy: user.id },
+            { tenantId: tenant.id, size: 'XL',  createdBy: user.id },
+            { tenantId: tenant.id, size: 'XXL', createdBy: user.id },
+          ],
+        },
       },
     }),
     prisma.product.create({
@@ -90,8 +98,16 @@ async function seed() {
         sku: 'SUIT-NAV-001',
         category: 'Suits',
         unit: 'piece',
-        avgCost: 0,
         createdBy: user.id,
+        variants: {
+          create: [
+            { tenantId: tenant.id, size: 'S',   createdBy: user.id },
+            { tenantId: tenant.id, size: 'M',   createdBy: user.id },
+            { tenantId: tenant.id, size: 'L',   createdBy: user.id },
+            { tenantId: tenant.id, size: 'XL',  createdBy: user.id },
+            { tenantId: tenant.id, size: 'XXL', createdBy: user.id },
+          ],
+        },
       },
     }),
     prisma.product.create({
@@ -101,8 +117,16 @@ async function seed() {
         sku: 'SHRT-WHT-001',
         category: 'Shirts',
         unit: 'piece',
-        avgCost: 0,
         createdBy: user.id,
+        variants: {
+          create: [
+            { tenantId: tenant.id, size: 'S',   createdBy: user.id },
+            { tenantId: tenant.id, size: 'M',   createdBy: user.id },
+            { tenantId: tenant.id, size: 'L',   createdBy: user.id },
+            { tenantId: tenant.id, size: 'XL',  createdBy: user.id },
+            { tenantId: tenant.id, size: 'XXL', createdBy: user.id },
+          ],
+        },
       },
     }),
   ]);

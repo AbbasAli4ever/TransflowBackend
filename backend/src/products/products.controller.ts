@@ -23,7 +23,9 @@ import {
   ProductListResponseDto,
   ProductResponseDto,
   ProductStockResponseDto,
+  ProductVariantResponseDto,
 } from './dto/product-response.dto';
+import { CreateProductVariantDto } from './dto/create-product-variant.dto';
 
 @ApiTags('Products')
 @ApiBearerAuth('bearer')
@@ -92,13 +94,43 @@ export class ProductsController {
   }
 
   @Get(':id/stock')
-  @ApiOperation({ summary: 'Get product stock and average cost' })
+  @ApiOperation({ summary: 'Get product stock broken down by size variant' })
   @ApiParam({ name: 'id', description: 'Product UUID' })
-  @ApiOkResponse({ description: 'Product stock', type: ProductStockResponseDto })
+  @ApiOkResponse({ description: 'Product stock per variant', type: ProductStockResponseDto })
   @ApiNotFoundResponse({ description: 'Product not found', type: ApiErrorResponse })
   @ApiBadRequestResponse({ description: 'Invalid UUID', type: ApiErrorResponse })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   getStock(@Param('id', ParseUUIDPipe) id: string) {
     return this.productsService.getStock(id);
+  }
+
+  @Post(':id/variants')
+  @Roles('OWNER', 'ADMIN')
+  @ApiOperation({ summary: 'Add a size variant to a product' })
+  @ApiParam({ name: 'id', description: 'Product UUID' })
+  @ApiCreatedResponse({ description: 'Variant created', type: ProductVariantResponseDto })
+  @ApiNotFoundResponse({ description: 'Product not found', type: ApiErrorResponse })
+  @ApiConflictResponse({ description: 'Variant with this size already exists', type: ApiErrorResponse })
+  @ApiBadRequestResponse({ description: 'Validation failed', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  addVariant(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateProductVariantDto) {
+    return this.productsService.addVariant(id, dto);
+  }
+
+  @Patch(':id/variants/:variantId/status')
+  @Roles('OWNER', 'ADMIN')
+  @ApiOperation({ summary: 'Update variant status' })
+  @ApiParam({ name: 'id', description: 'Product UUID' })
+  @ApiParam({ name: 'variantId', description: 'Variant UUID' })
+  @ApiOkResponse({ description: 'Variant status updated', type: ProductVariantResponseDto })
+  @ApiNotFoundResponse({ description: 'Variant not found', type: ApiErrorResponse })
+  @ApiBadRequestResponse({ description: 'Cannot deactivate variant with positive stock', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  updateVariantStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('variantId', ParseUUIDPipe) variantId: string,
+    @Body() dto: UpdateStatusDto,
+  ) {
+    return this.productsService.updateVariantStatus(id, variantId, dto);
   }
 }

@@ -87,7 +87,7 @@ describe('Posting — CUSTOMER_RETURN (Integration)', () => {
 
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 2000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 2000 }],
       });
       const sourceLine = sale.transactionLines[0];
 
@@ -127,12 +127,12 @@ describe('Posting — CUSTOMER_RETURN (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
       });
 
       const sale = await createAndPostSale(app, token, {
         customerId: customer2.id,
-        lines: [{ productId: product.id, quantity: 3, unitPrice: 2000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 3, unitPrice: 2000 }],
       });
       const sourceLine = sale.transactionLines[0];
 
@@ -153,7 +153,7 @@ describe('Posting — CUSTOMER_RETURN (Integration)', () => {
 
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 2, unitPrice: 2000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 2, unitPrice: 2000 }],
       });
       const sourceLine = sale.transactionLines[0];
 
@@ -178,7 +178,7 @@ describe('Posting — CUSTOMER_RETURN (Integration)', () => {
 
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 2000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 2000 }],
       });
       const sourceLine = sale.transactionLines[0];
 
@@ -213,7 +213,7 @@ describe('Posting — CUSTOMER_RETURN (Integration)', () => {
 
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 2000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 2000 }],
       });
       const sourceLine = sale.transactionLines[0];
 
@@ -238,7 +238,7 @@ describe('Posting — CUSTOMER_RETURN (Integration)', () => {
 
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 2000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 2000 }],
       });
       const sourceLine = sale.transactionLines[0];
 
@@ -265,7 +265,7 @@ describe('Posting — CUSTOMER_RETURN (Integration)', () => {
 
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 2000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 2000 }],
       });
       const sourceLine = sale.transactionLines[0];
 
@@ -285,7 +285,7 @@ describe('Posting — CUSTOMER_RETURN (Integration)', () => {
 
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 3, unitPrice: 2000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 3, unitPrice: 2000 }],
       });
       const sourceLine = sale.transactionLines[0];
 
@@ -318,7 +318,7 @@ describe('Posting — CUSTOMER_RETURN (Integration)', () => {
     // Purchase to put stock in
     await createAndPostPurchase(app, token, {
       supplierId: supplier.id,
-      lines: [{ productId: product.id, quantity: 100, unitCost: 1000 }],
+      lines: [{ variantId: product.variants[0].id, quantity: 100, unitCost: 1000 }],
     });
 
     return { supplier, product };

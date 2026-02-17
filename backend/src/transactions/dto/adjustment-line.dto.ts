@@ -2,9 +2,9 @@ import { IsUUID, IsInt, Min, IsEnum, IsString, MaxLength } from 'class-validator
 import { ApiProperty } from '@nestjs/swagger';
 
 export class AdjustmentLineDto {
-  @ApiProperty({ example: 'product-uuid' })
+  @ApiProperty({ example: 'variant-uuid', description: 'ProductVariant UUID (specific size)' })
   @IsUUID()
-  productId!: string;
+  variantId!: string;
 
   @ApiProperty({ example: 5 })
   @IsInt()

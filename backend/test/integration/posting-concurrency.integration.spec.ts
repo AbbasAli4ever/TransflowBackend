@@ -57,7 +57,7 @@ describe('Posting — Concurrency (Integration)', () => {
     // Stock exactly 5 units
     await createAndPostPurchase(app, token, {
       supplierId: supplier.id,
-      lines: [{ productId: product.id, quantity: 5, unitCost: 100 }],
+      lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 100 }],
     });
 
     // Create two sale drafts, each wanting all 5 units
@@ -67,7 +67,7 @@ describe('Posting — Concurrency (Integration)', () => {
       .send({
         customerId: customer.id,
         transactionDate: new Date().toISOString().split('T')[0],
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 200 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 200 }],
       })
       .expect(201);
 
@@ -77,7 +77,7 @@ describe('Posting — Concurrency (Integration)', () => {
       .send({
         customerId: customer.id,
         transactionDate: new Date().toISOString().split('T')[0],
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 200 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 200 }],
       })
       .expect(201);
 
@@ -118,12 +118,12 @@ describe('Posting — Concurrency (Integration)', () => {
       request(app.getHttpServer())
         .post('/api/v1/transactions/purchases/draft')
         .set(authHeader(token))
-        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }] })
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }] })
         .expect(201),
       request(app.getHttpServer())
         .post('/api/v1/transactions/purchases/draft')
         .set(authHeader(token))
-        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ productId: product.id, quantity: 1, unitCost: 100 }] })
+        .send({ supplierId: supplier.id, transactionDate: today, lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }] })
         .expect(201),
     ]);
 

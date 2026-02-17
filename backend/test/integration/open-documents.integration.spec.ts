@@ -69,7 +69,7 @@ describe('Open Documents (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 2000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 2000 }],
       });
 
       const res = await request(app.getHttpServer())
@@ -92,7 +92,7 @@ describe('Open Documents (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 2000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 2000 }],
       });
 
       // Pay 6000 of 10000
@@ -121,7 +121,7 @@ describe('Open Documents (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 2000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 2000 }],
       });
 
       // Fully paid
@@ -166,7 +166,7 @@ describe('Open Documents (Integration)', () => {
       const product2 = await createTestProduct(prisma, t2.id, u2.id);
       await createAndPostPurchase(app, t2Token, {
         supplierId: supplier2.id,
-        lines: [{ productId: product2.id, quantity: 1, unitCost: 1000 }],
+        lines: [{ variantId: product2.variants[0].id, quantity: 1, unitCost: 1000 }],
       });
 
       // Tenant 1 tries to access tenant 2 supplier — gets 404
@@ -202,7 +202,7 @@ describe('Open Documents (Integration)', () => {
       // Pre-stock
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 20, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 20, unitCost: 500 }],
       });
 
       const saleDraft = await request(app.getHttpServer())
@@ -211,7 +211,7 @@ describe('Open Documents (Integration)', () => {
         .send({
           customerId: customer.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 5, unitPrice: 2000 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 2000 }],
         })
         .expect(201);
 

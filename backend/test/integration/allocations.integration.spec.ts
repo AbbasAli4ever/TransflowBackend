@@ -66,7 +66,7 @@ describe('Allocations — List & Filters (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 2000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 2000 }],
       });
 
       const payment = await createAndPostSupplierPayment(app, token, {
@@ -103,11 +103,11 @@ describe('Allocations — List & Filters (Integration)', () => {
       // Purchases for both suppliers
       await createAndPostPurchase(app, token, {
         supplierId: supplier1.id,
-        lines: [{ productId: product.id, quantity: 3, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 3, unitCost: 1000 }],
       });
       await createAndPostPurchase(app, token, {
         supplierId: supplier2.id,
-        lines: [{ productId: product.id, quantity: 3, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 3, unitCost: 1000 }],
       });
 
       // Payments for both
@@ -138,11 +138,11 @@ describe('Allocations — List & Filters (Integration)', () => {
 
       const purchase1 = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 3, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 3, unitCost: 1000 }],
       });
       const purchase2 = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 3, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 3, unitCost: 1000 }],
       });
 
       await createAndPostSupplierPayment(app, token, {
@@ -176,7 +176,7 @@ describe('Allocations — List & Filters (Integration)', () => {
       for (let i = 0; i < 3; i++) {
         const purchase = await createAndPostPurchase(app, token, {
           supplierId: supplier.id,
-          lines: [{ productId: product.id, quantity: 1, unitCost: 1000 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 1000 }],
         });
         await createAndPostSupplierPayment(app, token, {
           supplierId: supplier.id,
@@ -213,7 +213,7 @@ describe('Allocations — List & Filters (Integration)', () => {
 
       const purchase2 = await createAndPostPurchase(app, t2Token, {
         supplierId: supplier2.id,
-        lines: [{ productId: product2.id, quantity: 1, unitCost: 1000 }],
+        lines: [{ variantId: product2.variants[0].id, quantity: 1, unitCost: 1000 }],
       });
 
       await createAndPostSupplierPayment(app, t2Token, {

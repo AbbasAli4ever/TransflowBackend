@@ -47,7 +47,7 @@ describe('Posting — CUSTOMER_PAYMENT (Integration)', () => {
 
   async function createAndPostSale(
     customerId: string,
-    productId: string,
+    variantId: string,
     qty: number,
     unitPrice: number,
     supplierId: string,
@@ -55,7 +55,7 @@ describe('Posting — CUSTOMER_PAYMENT (Integration)', () => {
     // First we need stock — create a purchase for the product
     await createAndPostPurchase(app, token, {
       supplierId,
-      lines: [{ productId, quantity: qty * 2, unitCost: Math.floor(unitPrice * 0.5) }],
+      lines: [{ variantId, quantity: qty * 2, unitCost: Math.floor(unitPrice * 0.5) }],
     });
 
     const draftRes = await request(app.getHttpServer())
@@ -64,7 +64,7 @@ describe('Posting — CUSTOMER_PAYMENT (Integration)', () => {
       .send({
         customerId,
         transactionDate: new Date().toISOString().split('T')[0],
-        lines: [{ productId, quantity: qty, unitPrice }],
+        lines: [{ variantId, quantity: qty, unitPrice }],
       })
       .expect(201);
 
@@ -158,7 +158,7 @@ describe('Posting — CUSTOMER_PAYMENT (Integration)', () => {
       const account = await createTestPaymentAccount(prisma, tenantId, userId);
 
       // Create an outstanding sale
-      await createAndPostSale(customer.id, product.id, 5, 2000, supplier.id);
+      await createAndPostSale(customer.id, product.variants[0].id, 5, 2000, supplier.id);
 
       const draft = await createCustomerPaymentDraft(customer.id, 10000, account.id);
 
@@ -221,7 +221,7 @@ describe('Posting — CUSTOMER_PAYMENT (Integration)', () => {
       // Pre-stock
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 100, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 100, unitCost: 500 }],
       });
 
       // Two sales
@@ -231,7 +231,7 @@ describe('Posting — CUSTOMER_PAYMENT (Integration)', () => {
         .send({
           customerId: customer.id,
           transactionDate: new Date(Date.now() - 86400000).toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 3, unitPrice: 1000 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 3, unitPrice: 1000 }],
         })
         .expect(201);
       const sale1 = await request(app.getHttpServer())
@@ -246,7 +246,7 @@ describe('Posting — CUSTOMER_PAYMENT (Integration)', () => {
         .send({
           customerId: customer.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 5, unitPrice: 1000 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 1000 }],
         })
         .expect(201);
       const sale2 = await request(app.getHttpServer())
@@ -286,7 +286,7 @@ describe('Posting — CUSTOMER_PAYMENT (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 20, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 20, unitCost: 500 }],
       });
 
       const sale1Draft = await request(app.getHttpServer())
@@ -295,7 +295,7 @@ describe('Posting — CUSTOMER_PAYMENT (Integration)', () => {
         .send({
           customerId: customer.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 5, unitPrice: 1000 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 1000 }],
         })
         .expect(201);
       const sale1 = await request(app.getHttpServer())
@@ -333,7 +333,7 @@ describe('Posting — CUSTOMER_PAYMENT (Integration)', () => {
       // Sale belongs to customer2
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
       });
 
       const sale2Draft = await request(app.getHttpServer())
@@ -342,7 +342,7 @@ describe('Posting — CUSTOMER_PAYMENT (Integration)', () => {
         .send({
           customerId: customer2.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 5, unitPrice: 1000 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 1000 }],
         })
         .expect(201);
       const sale2 = await request(app.getHttpServer())

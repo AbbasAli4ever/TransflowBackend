@@ -71,7 +71,7 @@ describe('zTester — Payment Attack Scenarios (Integration)', () => {
       const account = await createTestPaymentAccount(prisma, tenantAId, userIdA);
       const purchase = await createAndPostPurchase(app, tokenA, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 50, unitCost: 100 }], // Total 5000
+        lines: [{ variantId: product.variants[0].id, quantity: 50, unitCost: 100 }], // Total 5000
       });
 
       // 2. Create a payment draft for the exact amount.
@@ -129,7 +129,7 @@ describe('zTester — Payment Attack Scenarios (Integration)', () => {
       const productA = await createTestProduct(prisma, tenantAId, userIdA);
       const purchaseA = await createAndPostPurchase(app, tokenA, {
         supplierId: supplierA.id,
-        lines: [{ productId: productA.id, quantity: 1, unitCost: 100 }],
+        lines: [{ variantId: productA.variants[0].id, quantity: 1, unitCost: 100 }],
       });
 
       // 2. Setup: Create a payment draft in Tenant B.
@@ -173,7 +173,7 @@ describe('zTester — Payment Attack Scenarios (Integration)', () => {
         const account = await createTestPaymentAccount(prisma, tenantAId, userIdA);
         const purchase = await createAndPostPurchase(app, tokenA, {
             supplierId: supplier.id,
-            lines: [{ productId: product.id, quantity: 1, unitCost: 5000 }],
+            lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 5000 }],
         });
 
         const paymentDraft = await request(app.getHttpServer())
@@ -211,12 +211,12 @@ describe('zTester — Payment Attack Scenarios (Integration)', () => {
         // zTester FIX: Add stock for the product before trying to sell it.
         await createAndPostPurchase(app, tokenA, {
             supplierId: supplier.id,
-            lines: [{ productId: product.id, quantity: 10, unitCost: 1000 }],
+            lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
         });
 
         const sale = await createAndPostSale(app, tokenA, {
             customerId: customer.id,
-            lines: [{ productId: product.id, quantity: 1, unitPrice: 5000 }],
+            lines: [{ variantId: product.variants[0].id, quantity: 1, unitPrice: 5000 }],
         });
 
         const paymentDraft = await request(app.getHttpServer())

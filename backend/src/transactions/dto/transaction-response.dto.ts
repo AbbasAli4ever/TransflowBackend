@@ -7,8 +7,14 @@ export class TransactionLineResponseDto {
   @ApiProperty({ example: '9f4b6e2c-0a2d-4cc5-8c4d-1a4a88c81a88', format: 'uuid' })
   transactionId!: string;
 
-  @ApiProperty({ example: 'c4c8d1e8-2d1b-4f2b-9f8a-2b3d9a8d1f0a', format: 'uuid' })
-  productId!: string;
+  @ApiProperty({ example: 'c4c8d1e8-2d1b-4f2b-9f8a-2b3d9a8d1f0a', format: 'uuid', description: 'ProductVariant UUID' })
+  variantId!: string;
+
+  @ApiPropertyOptional({ type: String, example: '38', description: 'Size label from the variant', nullable: true })
+  variantSize?: string | null;
+
+  @ApiPropertyOptional({ type: String, example: 'e1c3f8d2-1b2a-4a3b-9b8c-1a2b3c4d5e6f', format: 'uuid', nullable: true, description: 'Parent product UUID' })
+  productId?: string | null;
 
   @ApiProperty({ example: 5 })
   quantity!: number;

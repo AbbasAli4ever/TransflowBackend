@@ -44,14 +44,14 @@ describe('Posting — PURCHASE (Integration)', () => {
     await app.close();
   });
 
-  async function createDraft(supplierId: string, productId: string, qty: number, unitCost: number) {
+  async function createDraft(supplierId: string, variantId: string, qty: number, unitCost: number) {
     const res = await request(app.getHttpServer())
       .post('/api/v1/transactions/purchases/draft')
       .set(authHeader(token))
       .send({
         supplierId,
         transactionDate: new Date().toISOString().split('T')[0],
-        lines: [{ productId, quantity: qty, unitCost }],
+        lines: [{ variantId, quantity: qty, unitCost }],
       })
       .expect(201);
     return res.body;
@@ -63,7 +63,7 @@ describe('Posting — PURCHASE (Integration)', () => {
     it('posts a purchase with no payment', async () => {
       const supplier = await createTestSupplier(prisma, tenantId, userId);
       const product = await createTestProduct(prisma, tenantId, userId);
-      const draft = await createDraft(supplier.id, product.id, 10, 500);
+      const draft = await createDraft(supplier.id, product.variants[0].id, 10, 500);
 
       const res = await request(app.getHttpServer())
         .post(`/api/v1/transactions/${draft.id}/post`)
@@ -82,7 +82,7 @@ describe('Posting — PURCHASE (Integration)', () => {
       const supplier = await createTestSupplier(prisma, tenantId, userId);
       const product = await createTestProduct(prisma, tenantId, userId);
       const account = await createTestPaymentAccount(prisma, tenantId, userId);
-      const draft = await createDraft(supplier.id, product.id, 5, 1000);
+      const draft = await createDraft(supplier.id, product.variants[0].id, 5, 1000);
 
       const res = await request(app.getHttpServer())
         .post(`/api/v1/transactions/${draft.id}/post`)
@@ -102,7 +102,7 @@ describe('Posting — PURCHASE (Integration)', () => {
       const supplier = await createTestSupplier(prisma, tenantId, userId);
       const product = await createTestProduct(prisma, tenantId, userId);
       const account = await createTestPaymentAccount(prisma, tenantId, userId);
-      const draft = await createDraft(supplier.id, product.id, 4, 1000);
+      const draft = await createDraft(supplier.id, product.variants[0].id, 4, 1000);
 
       const res = await request(app.getHttpServer())
         .post(`/api/v1/transactions/${draft.id}/post`)
@@ -122,7 +122,7 @@ describe('Posting — PURCHASE (Integration)', () => {
     it('creates PURCHASE_IN inventory movements', async () => {
       const supplier = await createTestSupplier(prisma, tenantId, userId);
       const product = await createTestProduct(prisma, tenantId, userId);
-      const draft = await createDraft(supplier.id, product.id, 7, 300);
+      const draft = await createDraft(supplier.id, product.variants[0].id, 7, 300);
 
       const res = await request(app.getHttpServer())
         .post(`/api/v1/transactions/${draft.id}/post`)
@@ -140,7 +140,7 @@ describe('Posting — PURCHASE (Integration)', () => {
       const supplier = await createTestSupplier(prisma, tenantId, userId);
       const product = await createTestProduct(prisma, tenantId, userId);
       const account = await createTestPaymentAccount(prisma, tenantId, userId);
-      const draft = await createDraft(supplier.id, product.id, 2, 1000);
+      const draft = await createDraft(supplier.id, product.variants[0].id, 2, 1000);
 
       await request(app.getHttpServer())
         .post(`/api/v1/transactions/${draft.id}/post`)
@@ -161,8 +161,8 @@ describe('Posting — PURCHASE (Integration)', () => {
   describe('Average cost update', () => {
     it('sets avgCost on first purchase', async () => {
       const supplier = await createTestSupplier(prisma, tenantId, userId);
-      const product = await createTestProduct(prisma, tenantId, userId, { avgCost: 0 });
-      const draft = await createDraft(supplier.id, product.id, 10, 800);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const draft = await createDraft(supplier.id, product.variants[0].id, 10, 800);
 
       await request(app.getHttpServer())
         .post(`/api/v1/transactions/${draft.id}/post`)
@@ -170,7 +170,7 @@ describe('Posting — PURCHASE (Integration)', () => {
         .send({ idempotencyKey: uuid() })
         .expect(200);
 
-      const updated = await prisma.product.findFirst({ where: { id: product.id } });
+      const updated = await prisma.productVariant.findFirst({ where: { productId: product.id } });
       expect(updated!.avgCost).toBe(800);
     });
 
@@ -181,18 +181,18 @@ describe('Posting — PURCHASE (Integration)', () => {
       // First purchase: 10 units @ 1000
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
       });
 
       // Second purchase: 10 units @ 2000 → new avg = (10*1000 + 10*2000) / 20 = 1500
-      const draft2 = await createDraft(supplier.id, product.id, 10, 2000);
+      const draft2 = await createDraft(supplier.id, product.variants[0].id, 10, 2000);
       await request(app.getHttpServer())
         .post(`/api/v1/transactions/${draft2.id}/post`)
         .set(authHeader(token))
         .send({ idempotencyKey: uuid() })
         .expect(200);
 
-      const updated = await prisma.product.findFirst({ where: { id: product.id } });
+      const updated = await prisma.productVariant.findFirst({ where: { productId: product.id } });
       expect(updated!.avgCost).toBe(1500);
     });
   });
@@ -203,7 +203,7 @@ describe('Posting — PURCHASE (Integration)', () => {
     it('generates PUR-YYYY-0001 for first purchase', async () => {
       const supplier = await createTestSupplier(prisma, tenantId, userId);
       const product = await createTestProduct(prisma, tenantId, userId);
-      const draft = await createDraft(supplier.id, product.id, 1, 100);
+      const draft = await createDraft(supplier.id, product.variants[0].id, 1, 100);
 
       const res = await request(app.getHttpServer())
         .post(`/api/v1/transactions/${draft.id}/post`)
@@ -222,13 +222,13 @@ describe('Posting — PURCHASE (Integration)', () => {
 
       const posted1 = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 1, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 1, unitCost: 100 }],
       });
       expect(posted1.documentNumber).toBe(`PUR-${year}-0001`);
 
       const posted2 = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 2, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 2, unitCost: 100 }],
       });
       expect(posted2.documentNumber).toBe(`PUR-${year}-0002`);
     });
@@ -240,7 +240,7 @@ describe('Posting — PURCHASE (Integration)', () => {
     it('returns same result when posted twice with the same idempotency key (200)', async () => {
       const supplier = await createTestSupplier(prisma, tenantId, userId);
       const product = await createTestProduct(prisma, tenantId, userId);
-      const draft = await createDraft(supplier.id, product.id, 3, 500);
+      const draft = await createDraft(supplier.id, product.variants[0].id, 3, 500);
       const key = uuid();
 
       const res1 = await request(app.getHttpServer())
@@ -266,7 +266,7 @@ describe('Posting — PURCHASE (Integration)', () => {
     it('returns 409 when posted with a different idempotency key', async () => {
       const supplier = await createTestSupplier(prisma, tenantId, userId);
       const product = await createTestProduct(prisma, tenantId, userId);
-      const draft = await createDraft(supplier.id, product.id, 2, 500);
+      const draft = await createDraft(supplier.id, product.variants[0].id, 2, 500);
 
       await request(app.getHttpServer())
         .post(`/api/v1/transactions/${draft.id}/post`)
@@ -286,14 +286,14 @@ describe('Posting — PURCHASE (Integration)', () => {
       const product = await createTestProduct(prisma, tenantId, userId);
       const sharedKey = uuid();
 
-      const draft1 = await createDraft(supplier.id, product.id, 1, 100);
+      const draft1 = await createDraft(supplier.id, product.variants[0].id, 1, 100);
       await request(app.getHttpServer())
         .post(`/api/v1/transactions/${draft1.id}/post`)
         .set(authHeader(token))
         .send({ idempotencyKey: sharedKey })
         .expect(200);
 
-      const draft2 = await createDraft(supplier.id, product.id, 1, 100);
+      const draft2 = await createDraft(supplier.id, product.variants[0].id, 1, 100);
       await request(app.getHttpServer())
         .post(`/api/v1/transactions/${draft2.id}/post`)
         .set(authHeader(token))
@@ -317,7 +317,7 @@ describe('Posting — PURCHASE (Integration)', () => {
       const supplier = await createTestSupplier(prisma, tenantId, userId);
       const product = await createTestProduct(prisma, tenantId, userId);
       const account = await createTestPaymentAccount(prisma, tenantId, userId);
-      const draft = await createDraft(supplier.id, product.id, 1, 1000);
+      const draft = await createDraft(supplier.id, product.variants[0].id, 1, 1000);
 
       await request(app.getHttpServer())
         .post(`/api/v1/transactions/${draft.id}/post`)
@@ -329,7 +329,7 @@ describe('Posting — PURCHASE (Integration)', () => {
     it('returns 400 when paymentAccountId is missing but paidNow > 0', async () => {
       const supplier = await createTestSupplier(prisma, tenantId, userId);
       const product = await createTestProduct(prisma, tenantId, userId);
-      const draft = await createDraft(supplier.id, product.id, 1, 1000);
+      const draft = await createDraft(supplier.id, product.variants[0].id, 1, 1000);
 
       await request(app.getHttpServer())
         .post(`/api/v1/transactions/${draft.id}/post`)
@@ -344,7 +344,7 @@ describe('Posting — PURCHASE (Integration)', () => {
       const account = await createTestPaymentAccount(prisma, tenantId, userId);
       await prisma.paymentAccount.update({ where: { id: account.id }, data: { status: 'INACTIVE' } });
 
-      const draft = await createDraft(supplier.id, product.id, 1, 1000);
+      const draft = await createDraft(supplier.id, product.variants[0].id, 1, 1000);
 
       await request(app.getHttpServer())
         .post(`/api/v1/transactions/${draft.id}/post`)
@@ -356,7 +356,7 @@ describe('Posting — PURCHASE (Integration)', () => {
     it('returns 400 when idempotencyKey is missing', async () => {
       const supplier = await createTestSupplier(prisma, tenantId, userId);
       const product = await createTestProduct(prisma, tenantId, userId);
-      const draft = await createDraft(supplier.id, product.id, 1, 100);
+      const draft = await createDraft(supplier.id, product.variants[0].id, 1, 100);
 
       await request(app.getHttpServer())
         .post(`/api/v1/transactions/${draft.id}/post`)

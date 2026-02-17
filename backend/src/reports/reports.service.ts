@@ -207,7 +207,7 @@ export class ReportsService {
         COALESCE(SUM(CASE WHEN movement_type = 'SUPPLIER_RETURN_OUT' THEN quantity ELSE 0 END), 0)::bigint AS "totalReturnQty"
       FROM inventory_movements
       WHERE tenant_id = ${tenantId}::uuid
-        AND product_id = ${id}::uuid
+        AND variant_id IN (SELECT id FROM product_variants WHERE product_id = ${id}::uuid)
         AND transaction_date <= ${asOfDate}::date
     `;
 

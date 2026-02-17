@@ -75,7 +75,7 @@ describe('Reports (Integration)', () => {
       // Purchase on 2026-01-10
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
         transactionDate: '2026-01-10',
         paidNow: 3000,
         paymentAccountId: account.id,
@@ -84,7 +84,7 @@ describe('Reports (Integration)', () => {
       // Another purchase on 2026-02-15 (should be excluded when asOfDate=2026-01-31)
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 500 }],
         transactionDate: '2026-02-15',
       });
 
@@ -108,7 +108,7 @@ describe('Reports (Integration)', () => {
       // 1 purchase
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 20, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 20, unitCost: 500 }],
         transactionDate: '2026-01-05',
       });
 
@@ -170,20 +170,20 @@ describe('Reports (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 50, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 50, unitCost: 100 }],
       });
 
       // Sale on 2026-01-05
       await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 10, unitPrice: 300 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitPrice: 300 }],
         transactionDate: '2026-01-05',
       });
 
       // Sale on 2026-02-10 (excluded when asOfDate=2026-01-31)
       await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 300 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 300 }],
         transactionDate: '2026-02-10',
       });
 
@@ -205,13 +205,13 @@ describe('Reports (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 30, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 30, unitCost: 100 }],
       });
 
       // Sale
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 10, unitPrice: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitPrice: 500 }],
       });
 
       // Payment
@@ -288,7 +288,7 @@ describe('Reports (Integration)', () => {
       // Payment out on 2026-01-10 (5 * 400 = 2000 total, paid in full)
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 400 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 400 }],
         transactionDate: '2026-01-10',
         paidNow: 2000,
         paymentAccountId: account.id,
@@ -297,7 +297,7 @@ describe('Reports (Integration)', () => {
       // Payment out on 2026-02-10 (excluded when asOfDate=2026-01-31)
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 200 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 200 }],
         transactionDate: '2026-02-10',
         paidNow: 1000,
         paymentAccountId: account.id,
@@ -330,14 +330,14 @@ describe('Reports (Integration)', () => {
       // Purchase on 2026-01-05: 20 units in
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 20, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 20, unitCost: 500 }],
         transactionDate: '2026-01-05',
       });
 
       // Purchase on 2026-02-05: 10 more units (should be excluded when asOfDate=2026-01-31)
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 600 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 600 }],
         transactionDate: '2026-02-05',
       });
 
@@ -359,13 +359,13 @@ describe('Reports (Integration)', () => {
       // 30 in via purchase
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 30, unitCost: 200 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 30, unitCost: 200 }],
       });
 
       // 8 out via sale, 2 return from customer
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 8, unitPrice: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 8, unitPrice: 500 }],
       });
 
       const saleLineId = sale.transactionLines[0].id;
@@ -400,7 +400,7 @@ describe('Reports (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 300 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 300 }],
       });
 
       const res = await request(app.getHttpServer())
@@ -431,19 +431,19 @@ describe('Reports (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 50, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 50, unitCost: 100 }],
       });
 
       // customerA: 5000 outstanding
       await createAndPostSale(app, token, {
         customerId: customerA.id,
-        lines: [{ productId: product.id, quantity: 10, unitPrice: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitPrice: 500 }],
       });
 
       // customerB: fully paid — balance = 0, should NOT appear
       const saleB = await createAndPostSale(app, token, {
         customerId: customerB.id,
-        lines: [{ productId: product.id, quantity: 4, unitPrice: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 4, unitPrice: 500 }],
       });
       await createAndPostCustomerPayment(app, token, {
         customerId: customerB.id,
@@ -469,16 +469,16 @@ describe('Reports (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 100, unitCost: 50 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 100, unitCost: 50 }],
       });
 
       await createAndPostSale(app, token, {
         customerId: customerA.id,
-        lines: [{ productId: product.id, quantity: 20, unitPrice: 500 }], // 10000
+        lines: [{ variantId: product.variants[0].id, quantity: 20, unitPrice: 500 }], // 10000
       });
       await createAndPostSale(app, token, {
         customerId: customerB.id,
-        lines: [{ productId: product.id, quantity: 2, unitPrice: 200 }], // 400
+        lines: [{ variantId: product.variants[0].id, quantity: 2, unitPrice: 200 }], // 400
       });
 
       const res = await request(app.getHttpServer())
@@ -498,16 +498,16 @@ describe('Reports (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 50, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 50, unitCost: 100 }],
       });
 
       await createAndPostSale(app, token, {
         customerId: customerA.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 300 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 300 }],
       });
       await createAndPostSale(app, token, {
         customerId: customerB.id,
-        lines: [{ productId: product.id, quantity: 3, unitPrice: 300 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 3, unitPrice: 300 }],
       });
 
       const res = await request(app.getHttpServer())
@@ -527,13 +527,13 @@ describe('Reports (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 20, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 20, unitCost: 100 }],
       });
 
       // Sale of 10 units at 500 each = 5000 total
       await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 10, unitPrice: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitPrice: 500 }],
         transactionDate: '2026-01-01',
       });
 
@@ -570,13 +570,13 @@ describe('Reports (Integration)', () => {
       // supplierA: outstanding 5000
       await createAndPostPurchase(app, token, {
         supplierId: supplierA.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
       });
 
       // supplierB: fully paid — should NOT appear
       await createAndPostPurchase(app, token, {
         supplierId: supplierB.id,
-        lines: [{ productId: product.id, quantity: 4, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 4, unitCost: 500 }],
         paidNow: 2000,
         paymentAccountId: account.id,
       });
@@ -598,11 +598,11 @@ describe('Reports (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplierA.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 500 }],
       });
       await createAndPostPurchase(app, token, {
         supplierId: supplierB.id,
-        lines: [{ productId: product.id, quantity: 3, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 3, unitCost: 500 }],
       });
 
       const res = await request(app.getHttpServer())
@@ -625,7 +625,7 @@ describe('Reports (Integration)', () => {
       // Pre-range purchase: 5000 AP_INCREASE
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
         transactionDate: '2025-12-15',
       });
 
@@ -647,7 +647,7 @@ describe('Reports (Integration)', () => {
       // Purchase on 2026-01-05: 10000
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 20, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 20, unitCost: 500 }],
         transactionDate: '2026-01-05',
       });
 
@@ -677,7 +677,7 @@ describe('Reports (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
         transactionDate: '2025-12-01',
       });
 
@@ -710,20 +710,20 @@ describe('Reports (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 30, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 30, unitCost: 100 }],
       });
 
       // Pre-range sale
       await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 400 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 400 }],
         transactionDate: '2025-12-20',
       });
 
       // In-range sale
       await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 8, unitPrice: 400 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 8, unitPrice: 400 }],
         transactionDate: '2026-01-10',
       });
 
@@ -768,7 +768,7 @@ describe('Reports (Integration)', () => {
       // Pre-range payment out: 2000
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
         transactionDate: '2025-12-10',
         paidNow: 2000,
         paymentAccountId: account.id,
@@ -794,7 +794,7 @@ describe('Reports (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 20, unitCost: 200 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 20, unitCost: 200 }],
       });
 
       // Pay supplier 3000 out via explicit payment
@@ -808,7 +808,7 @@ describe('Reports (Integration)', () => {
       // Receive from customer 1500 in
       await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 500 }],
         transactionDate: '2026-01-15',
         receivedNow: 1500,
         paymentAccountId: account.id,
@@ -923,12 +923,12 @@ describe('Reports (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
       });
 
       const sale = await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 2000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 2000 }],
       });
 
       // Verify sale shows as open with asOfDate=today
@@ -1005,7 +1005,7 @@ describe('Reports (Integration)', () => {
 
       const purchase = await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
       });
 
       // Verify purchase shows as open with asOfDate=today

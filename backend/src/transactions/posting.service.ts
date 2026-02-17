@@ -29,7 +29,7 @@ export class PostingService {
           const txn = await tx.transaction.findFirst({
             where: { id: transactionId, tenantId },
             include: {
-              transactionLines: { include: { product: true } },
+              transactionLines: { include: { variant: true } },
             },
           });
 
@@ -136,15 +136,15 @@ export class PostingService {
   ) {
     const transactionDate = new Date(txn.transactionDate);
 
-    // 1. Calculate pre-movement stock for each product (before any writes)
+    // 1. Calculate pre-movement stock for each variant (before any writes)
     const preStocks = new Map<string, number>();
     for (const line of txn.transactionLines) {
-      const stock = await this.calculateProductStock(
+      const stock = await this.calculateVariantStock(
         tx,
         txn.tenantId,
-        line.productId,
+        line.variantId,
       );
-      preStocks.set(line.productId, stock);
+      preStocks.set(line.variantId, stock);
     }
 
     // 2. Generate document number (within Serializable tx)
@@ -174,7 +174,7 @@ export class PostingService {
         tenantId: txn.tenantId,
         transactionId: txn.id,
         transactionLineId: line.id,
-        productId: line.productId,
+        variantId: line.variantId,
         movementType: 'PURCHASE_IN',
         quantity: line.quantity,
         unitCostAtTime: line.unitCost,
@@ -183,10 +183,10 @@ export class PostingService {
       })),
     });
 
-    // 5. Update avgCost for each product using pre-movement stock
+    // 5. Update avgCost for each variant using pre-movement stock
     for (const line of txn.transactionLines) {
-      const preStock = preStocks.get(line.productId) ?? 0;
-      const oldAvg = line.product.avgCost;
+      const preStock = preStocks.get(line.variantId) ?? 0;
+      const oldAvg = line.variant.avgCost;
       const qty = line.quantity;
       const unitCost = line.unitCost;
 
@@ -197,8 +197,8 @@ export class PostingService {
               (preStock * oldAvg + qty * unitCost) / (preStock + qty),
             );
 
-      await tx.product.update({
-        where: { id: line.productId },
+      await tx.productVariant.update({
+        where: { id: line.variantId },
         data: { avgCost: newAvg },
       });
     }
@@ -269,22 +269,20 @@ export class PostingService {
 
     // 1. Check stock for ALL lines first (collect all errors before throwing)
     const stockErrors: Array<{
-      productId: string;
-      productName: string;
+      variantId: string;
       available: number;
       required: number;
     }> = [];
 
     for (const line of txn.transactionLines) {
-      const stock = await this.calculateProductStock(
+      const stock = await this.calculateVariantStock(
         tx,
         txn.tenantId,
-        line.productId,
+        line.variantId,
       );
       if (stock < line.quantity) {
         stockErrors.push({
-          productId: line.productId,
-          productName: line.product.name,
+          variantId: line.variantId,
           available: stock,
           required: line.quantity,
         });
@@ -293,7 +291,7 @@ export class PostingService {
 
     if (stockErrors.length > 0) {
       throw new UnprocessableEntityException({
-        message: 'Insufficient stock for one or more products',
+        message: 'Insufficient stock for one or more variants',
         errors: stockErrors,
       });
     }
@@ -319,16 +317,16 @@ export class PostingService {
       },
     });
 
-    // 4. createMany InventoryMovements (SALE_OUT), unitCostAtTime = product.avgCost
+    // 4. createMany InventoryMovements (SALE_OUT), unitCostAtTime = variant.avgCost
     await tx.inventoryMovement.createMany({
       data: txn.transactionLines.map((line: any) => ({
         tenantId: txn.tenantId,
         transactionId: txn.id,
         transactionLineId: line.id,
-        productId: line.productId,
+        variantId: line.variantId,
         movementType: 'SALE_OUT',
         quantity: line.quantity,
-        unitCostAtTime: line.product.avgCost,
+        unitCostAtTime: line.variant.avgCost,
         transactionDate,
         createdBy: userId,
       })),
@@ -389,10 +387,10 @@ export class PostingService {
     return this.fetchFullTransaction(tx, txn.id, txn.tenantId);
   }
 
-  async calculateProductStock(
+  async calculateVariantStock(
     tx: any,
     tenantId: string,
-    productId: string,
+    variantId: string,
   ): Promise<number> {
     const result = await tx.$queryRaw<Array<{ stock: bigint }>>`
       SELECT COALESCE(SUM(CASE
@@ -400,7 +398,7 @@ export class PostingService {
         ELSE -quantity
       END), 0) AS stock
       FROM inventory_movements
-      WHERE tenant_id = ${tenantId}::uuid AND product_id = ${productId}::uuid
+      WHERE tenant_id = ${tenantId}::uuid AND variant_id = ${variantId}::uuid
     `;
     return Number(result[0]?.stock ?? 0);
   }
@@ -604,10 +602,10 @@ export class PostingService {
   ) {
     const transactionDate = new Date(txn.transactionDate);
 
-    // Reload lines with product and sourceLine for race-condition guard
+    // Reload lines with variant for race-condition guard
     const lines = await tx.transactionLine.findMany({
       where: { transactionId: txn.id },
-      include: { product: true },
+      include: { variant: true },
     });
 
     // Task 2.4 — Aggregate quantities by sourceTransactionLineId to prevent over-return via duplicates
@@ -630,12 +628,12 @@ export class PostingService {
       }
     }
 
-    // Task 2.1 — Stock check: ensure current stock >= return quantity for each product
+    // Task 2.1 — Stock check: ensure current stock >= return quantity for each variant
     for (const line of lines) {
-      const currentStock = await this.calculateProductStock(tx, txn.tenantId, line.productId);
+      const currentStock = await this.calculateVariantStock(tx, txn.tenantId, line.variantId);
       if (currentStock < line.quantity) {
         throw new UnprocessableEntityException(
-          `Insufficient stock for product ${line.productId}: available ${currentStock}, required ${line.quantity}`,
+          `Insufficient stock for variant ${line.variantId}: available ${currentStock}, required ${line.quantity}`,
         );
       }
     }
@@ -663,7 +661,7 @@ export class PostingService {
         tenantId: txn.tenantId,
         transactionId: txn.id,
         transactionLineId: line.id,
-        productId: line.productId,
+        variantId: line.variantId,
         movementType: 'SUPPLIER_RETURN_OUT',
         quantity: line.quantity,
         unitCostAtTime: line.unitCost ?? 0,
@@ -695,10 +693,10 @@ export class PostingService {
   ) {
     const transactionDate = new Date(txn.transactionDate);
 
-    // Reload lines with product for race-condition guard + avgCost update
+    // Reload lines with variant for race-condition guard + avgCost update
     const lines = await tx.transactionLine.findMany({
       where: { transactionId: txn.id },
-      include: { product: true },
+      include: { variant: true },
     });
 
     // Task 2.5 — returnHandling is required for CUSTOMER_RETURN posting
@@ -751,23 +749,22 @@ export class PostingService {
         tenantId: txn.tenantId,
         transactionId: txn.id,
         transactionLineId: line.id,
-        productId: line.productId,
+        variantId: line.variantId,
         movementType: 'CUSTOMER_RETURN_IN',
         quantity: line.quantity,
-        unitCostAtTime: line.product.avgCost,
+        unitCostAtTime: line.variant.avgCost,
         transactionDate,
         createdBy: userId,
       })),
     });
 
-    // Update avgCost for returned products (weighted average)
+    // Update avgCost for returned variants (weighted average)
     for (const line of lines) {
-      const preStock = await this.calculateProductStock(tx, txn.tenantId, line.productId);
-      // preStock does NOT yet include the CUSTOMER_RETURN_IN we just created
-      // because createMany above was just run; in Postgres within same tx it is visible
-      // so we need to subtract our new qty to get the pre-return stock
+      const preStock = await this.calculateVariantStock(tx, txn.tenantId, line.variantId);
+      // preStock already includes the CUSTOMER_RETURN_IN we just created (visible in same tx)
+      // so subtract our new qty to get the pre-return stock
       const stockBeforeReturn = preStock - line.quantity;
-      const oldAvg = line.product.avgCost;
+      const oldAvg = line.variant.avgCost;
       const qty = line.quantity;
 
       const newAvg =
@@ -777,8 +774,8 @@ export class PostingService {
               (stockBeforeReturn * oldAvg + qty * oldAvg) / (stockBeforeReturn + qty),
             );
 
-      await tx.product.update({
-        where: { id: line.productId },
+      await tx.productVariant.update({
+        where: { id: line.variantId },
         data: { avgCost: newAvg },
       });
     }
@@ -952,10 +949,10 @@ export class PostingService {
 
       // Task 2.2 — Stock check before ADJUSTMENT_OUT
       if (movementType === 'ADJUSTMENT_OUT') {
-        const currentStock = await this.calculateProductStock(tx, txn.tenantId, line.productId);
+        const currentStock = await this.calculateVariantStock(tx, txn.tenantId, line.variantId);
         if (currentStock < line.quantity) {
           throw new UnprocessableEntityException(
-            `Insufficient stock for product ${line.productId}: available ${currentStock}, required ${line.quantity}`,
+            `Insufficient stock for variant ${line.variantId}: available ${currentStock}, required ${line.quantity}`,
           );
         }
       }
@@ -965,7 +962,7 @@ export class PostingService {
           tenantId: txn.tenantId,
           transactionId: txn.id,
           transactionLineId: line.id,
-          productId: line.productId,
+          variantId: line.variantId,
           movementType,
           quantity: line.quantity,
           unitCostAtTime: 0,
@@ -1136,7 +1133,7 @@ export class PostingService {
     return tx.transaction.findFirst({
       where: { id: transactionId, tenantId },
       include: {
-        transactionLines: { include: { product: true } },
+        transactionLines: { include: { variant: { include: { product: true } } } },
         inventoryMovements: true,
         ledgerEntries: true,
         paymentEntries: true,

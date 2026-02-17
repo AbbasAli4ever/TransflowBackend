@@ -96,7 +96,7 @@ describe('Dashboard (integration)', () => {
       // Pay 2000 from Cash → Cash: 5000 - 2000 = 3000
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 2, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 2, unitCost: 1000 }],
         paidNow: 2000,
         paymentAccountId: cashAcc.id,
         transactionDate: '2026-02-15',
@@ -126,7 +126,7 @@ describe('Dashboard (integration)', () => {
       // 10 units @ 500 → stock=10, totalValue=5000
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
         transactionDate: '2026-02-15',
       });
 
@@ -151,14 +151,14 @@ describe('Dashboard (integration)', () => {
       // Product A: 3 units @ 100 (stock=3, low stock)
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: productA.id, quantity: 3, unitCost: 100 }],
+        lines: [{ variantId: productA.variants[0].id, quantity: 3, unitCost: 100 }],
         transactionDate: '2026-02-15',
       });
 
       // Product B: 10 units @ 200 (stock=10, not low stock)
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: productB.id, quantity: 10, unitCost: 200 }],
+        lines: [{ variantId: productB.variants[0].id, quantity: 10, unitCost: 200 }],
         transactionDate: '2026-02-15',
       });
 
@@ -183,7 +183,7 @@ describe('Dashboard (integration)', () => {
       // Stock the product
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 50, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 50, unitCost: 100 }],
         transactionDate: '2026-01-01',
       });
 
@@ -193,14 +193,14 @@ describe('Dashboard (integration)', () => {
       // Customer A: sale 5000 on 2026-01-01 (45 days before 2026-02-15), no payment → overdue
       await createAndPostSale(app, token, {
         customerId: customerA.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 1000 }],
         transactionDate: '2026-01-01',
       });
 
       // Customer B: sale 2000, fully paid → balance=0, excluded
       const saleB = await createAndPostSale(app, token, {
         customerId: customerB.id,
-        lines: [{ productId: product.id, quantity: 2, unitPrice: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 2, unitPrice: 1000 }],
         transactionDate: '2026-01-01',
       });
       await createAndPostCustomerPayment(app, token, {
@@ -238,7 +238,7 @@ describe('Dashboard (integration)', () => {
       // Supplier A: purchase 3000, fully paid → balance=0, excluded
       const purA = await createAndPostPurchase(app, token, {
         supplierId: supplierA.id,
-        lines: [{ productId: product.id, quantity: 3, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 3, unitCost: 1000 }],
         transactionDate: '2026-01-01',
       });
       await createAndPostSupplierPayment(app, token, {
@@ -252,7 +252,7 @@ describe('Dashboard (integration)', () => {
       // Supplier B: purchase 2000, no payment — old date → overdue
       await createAndPostPurchase(app, token, {
         supplierId: supplierB.id,
-        lines: [{ productId: product.id, quantity: 2, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 2, unitCost: 1000 }],
         transactionDate: '2026-01-01',
       });
 
@@ -281,20 +281,20 @@ describe('Dashboard (integration)', () => {
       // Pre-stock on earlier date
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 100, unitCost: 100 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 100, unitCost: 100 }],
         transactionDate: '2026-01-01',
       });
 
       // Target date transactions
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 1000 }],
         transactionDate: '2026-02-15',
       });
 
       await createAndPostSale(app, token, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 10, unitPrice: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitPrice: 1000 }],
         transactionDate: '2026-02-15',
       });
 
@@ -333,14 +333,14 @@ describe('Dashboard (integration)', () => {
       // Purchase on 2026-01-10: 10 units @ 200 = 2000 value, AP balance 2000
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 200 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 200 }],
         transactionDate: '2026-01-10',
       });
 
       // Purchase on 2026-02-15: 5 more units @ 300 (excluded by asOfDate=2026-01-10)
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 300 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 300 }],
         transactionDate: '2026-02-15',
       });
 
@@ -383,12 +383,12 @@ describe('Dashboard (integration)', () => {
 
       await createAndPostPurchase(app, token2, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 20, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 20, unitCost: 500 }],
         transactionDate: '2026-02-15',
       });
       await createAndPostSale(app, token2, {
         customerId: customer.id,
-        lines: [{ productId: product.id, quantity: 5, unitPrice: 800 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 800 }],
         transactionDate: '2026-02-15',
       });
 

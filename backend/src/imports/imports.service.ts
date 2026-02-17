@@ -347,6 +347,9 @@ export class ImportsService {
                   category: data['category']?.trim() || null,
                   unit: data['unit']?.trim() || 'piece',
                   createdBy: userId,
+                  variants: {
+                    create: [{ tenantId, size: 'one-size', createdBy: userId }],
+                  },
                 },
               });
               recordId = created.id;
@@ -473,7 +476,9 @@ export class ImportsService {
             const count = await tx.transaction.count({ where: { tenantId, customerId: recordId } });
             if (count > 0) throw new ConflictException('Cannot rollback: records have dependencies');
           } else if (recordType === 'PRODUCT') {
-            const count = await tx.transactionLine.count({ where: { tenantId, productId: recordId } });
+            const count = await tx.transactionLine.count({
+              where: { tenantId, variant: { productId: recordId } },
+            });
             if (count > 0) throw new ConflictException('Cannot rollback: records have dependencies');
           } else if (recordType === 'PAYMENT_ACCOUNT') {
             const count = await tx.paymentEntry.count({ where: { tenantId, paymentAccountId: recordId } });

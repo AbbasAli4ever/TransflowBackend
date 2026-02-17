@@ -34,10 +34,14 @@ export async function cleanDatabase() {
   await client.inventoryMovement.deleteMany();
   await client.transactionLine.deleteMany();
   await client.transaction.deleteMany();
+  await client.documentSequence.deleteMany();
   await client.paymentAccount.deleteMany();
+  await client.productVariant.deleteMany();
   await client.product.deleteMany();
+  await client.statusChangeLog.deleteMany();
   await client.customer.deleteMany();
   await client.supplier.deleteMany();
+  await client.refreshToken.deleteMany();
   await client.user.deleteMany();
   await client.tenant.deleteMany();
 }

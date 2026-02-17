@@ -1,20 +1,29 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-export class ProductComputedDto {
-  @ApiProperty({ example: 0, description: 'Derived current stock quantity' })
-  currentStock!: number;
+export class ProductVariantResponseDto {
+  @ApiProperty({ example: 'a1b2c3d4-0000-0000-0000-000000000001', format: 'uuid' })
+  id!: string;
 
-  @ApiProperty({ example: 0, description: 'Derived total purchased quantity' })
-  totalPurchased!: number;
+  @ApiProperty({ example: '9f4b6e2c-0a2d-4cc5-8c4d-1a4a88c81a88', format: 'uuid' })
+  productId!: string;
 
-  @ApiProperty({ example: 0, description: 'Derived total sold quantity' })
-  totalSold!: number;
+  @ApiProperty({ example: '38', description: 'Size label, e.g. S, M, L, 38, 40, one-size' })
+  size!: string;
 
-  @ApiProperty({ type: String, example: null, nullable: true, format: 'date-time' })
-  lastPurchaseDate!: string | null;
+  @ApiPropertyOptional({ type: String, example: 'SUIT-NAVY-38', nullable: true })
+  sku?: string | null;
 
-  @ApiProperty({ type: String, example: null, nullable: true, format: 'date-time' })
-  lastSaleDate!: string | null;
+  @ApiProperty({ example: 12000, description: 'Average cost in PKR (integer)' })
+  avgCost!: number;
+
+  @ApiProperty({ example: 'ACTIVE' })
+  status!: string;
+
+  @ApiProperty({ example: '2026-02-11T10:00:00.000Z', format: 'date-time' })
+  createdAt!: string;
+
+  @ApiProperty({ example: '2026-02-11T10:00:00.000Z', format: 'date-time' })
+  updatedAt!: string;
 }
 
 export class ProductResponseDto {
@@ -24,20 +33,17 @@ export class ProductResponseDto {
   @ApiProperty({ example: '6c6f7f48-3d5b-4a3f-9b1d-9c0d73b0c3d2', format: 'uuid' })
   tenantId!: string;
 
-  @ApiProperty({ example: 'Sella Rice 25kg' })
+  @ApiProperty({ example: 'Gul Ahmed Suit - Navy' })
   name!: string;
 
-  @ApiPropertyOptional({ type: String, example: 'RICE-25KG', nullable: true })
+  @ApiPropertyOptional({ type: String, example: 'SUIT-NAVY', nullable: true })
   sku?: string | null;
 
-  @ApiPropertyOptional({ type: String, example: 'Grocery', nullable: true })
+  @ApiPropertyOptional({ type: String, example: 'Suits', nullable: true })
   category?: string | null;
 
-  @ApiPropertyOptional({ type: String, example: 'bag', nullable: true })
+  @ApiPropertyOptional({ type: String, example: 'piece', nullable: true })
   unit?: string | null;
-
-  @ApiProperty({ example: 125000, description: 'Average cost in PKR (integer)' })
-  avgCost!: number;
 
   @ApiProperty({ example: 'ACTIVE' })
   status!: string;
@@ -51,8 +57,8 @@ export class ProductResponseDto {
   @ApiPropertyOptional({ type: String, example: 'd2f2c7b5-0c2a-4aa2-9c60-6b3f94b7e8d4', format: 'uuid', nullable: true })
   createdBy?: string | null;
 
-  @ApiProperty({ type: ProductComputedDto })
-  _computed!: ProductComputedDto;
+  @ApiProperty({ type: [ProductVariantResponseDto] })
+  variants!: ProductVariantResponseDto[];
 }
 
 export class ProductListMetaDto {
@@ -77,16 +83,33 @@ export class ProductListResponseDto {
   meta!: ProductListMetaDto;
 }
 
+export class VariantStockDto {
+  @ApiProperty({ example: 'a1b2c3d4-0000-0000-0000-000000000001', format: 'uuid' })
+  variantId!: string;
+
+  @ApiProperty({ example: '38' })
+  size!: string;
+
+  @ApiPropertyOptional({ type: String, example: 'SUIT-NAVY-38', nullable: true })
+  sku?: string | null;
+
+  @ApiProperty({ example: 15 })
+  currentStock!: number;
+
+  @ApiProperty({ example: 12000, description: 'Average cost in PKR (integer)' })
+  avgCost!: number;
+}
+
 export class ProductStockResponseDto {
   @ApiProperty({ example: '9f4b6e2c-0a2d-4cc5-8c4d-1a4a88c81a88', format: 'uuid' })
   productId!: string;
 
-  @ApiProperty({ example: 'Sella Rice 25kg' })
+  @ApiProperty({ example: 'Gul Ahmed Suit - Navy' })
   productName!: string;
 
-  @ApiProperty({ example: 250 })
-  currentStock!: number;
+  @ApiProperty({ example: 45, description: 'Total stock across all sizes' })
+  totalStock!: number;
 
-  @ApiProperty({ example: 125000, description: 'Average cost in PKR (integer)' })
-  avgCost!: number;
+  @ApiProperty({ type: [VariantStockDto], description: 'Per-size breakdown' })
+  variants!: VariantStockDto[];
 }

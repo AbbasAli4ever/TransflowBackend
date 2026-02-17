@@ -57,7 +57,7 @@ describe('Balance & Stock Queries (Integration)', () => {
         .expect(200);
 
       expect(res.body.productId).toBe(product.id);
-      expect(res.body.currentStock).toBe(0);
+      expect(res.body.totalStock).toBe(0);
     });
 
     it('returns correct stock after a purchase', async () => {
@@ -66,7 +66,7 @@ describe('Balance & Stock Queries (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 15, unitCost: 400 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 15, unitCost: 400 }],
       });
 
       const res = await request(app.getHttpServer())
@@ -74,8 +74,8 @@ describe('Balance & Stock Queries (Integration)', () => {
         .set(authHeader(token))
         .expect(200);
 
-      expect(res.body.currentStock).toBe(15);
-      expect(res.body.avgCost).toBe(400);
+      expect(res.body.totalStock).toBe(15);
+      expect(res.body.variants[0].avgCost).toBe(400);
     });
 
     it('returns reduced stock after a sale', async () => {
@@ -85,7 +85,7 @@ describe('Balance & Stock Queries (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
       });
 
       // Create and post a sale
@@ -95,7 +95,7 @@ describe('Balance & Stock Queries (Integration)', () => {
         .send({
           customerId: customer.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 4, unitPrice: 800 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 4, unitPrice: 800 }],
         })
         .expect(201);
 
@@ -110,7 +110,7 @@ describe('Balance & Stock Queries (Integration)', () => {
         .set(authHeader(token))
         .expect(200);
 
-      expect(res.body.currentStock).toBe(6); // 10 - 4
+      expect(res.body.totalStock).toBe(6); // 10 - 4
     });
 
     it('returns 404 for unknown product', async () => {
@@ -155,7 +155,7 @@ describe('Balance & Stock Queries (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
       });
 
       const res = await request(app.getHttpServer())
@@ -176,7 +176,7 @@ describe('Balance & Stock Queries (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
         paidNow: 3000,
         paymentAccountId: account.id,
       });
@@ -198,12 +198,12 @@ describe('Balance & Stock Queries (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 1000 }],
       });
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 3, unitCost: 2000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 3, unitCost: 2000 }],
       });
 
       const res = await request(app.getHttpServer())
@@ -257,7 +257,7 @@ describe('Balance & Stock Queries (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 20, unitCost: 300 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 20, unitCost: 300 }],
       });
 
       const saleDraft = await request(app.getHttpServer())
@@ -266,7 +266,7 @@ describe('Balance & Stock Queries (Integration)', () => {
         .send({
           customerId: customer.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 8, unitPrice: 600 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 8, unitPrice: 600 }],
         })
         .expect(201);
 
@@ -294,7 +294,7 @@ describe('Balance & Stock Queries (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 200 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 200 }],
       });
 
       const saleDraft = await request(app.getHttpServer())
@@ -303,7 +303,7 @@ describe('Balance & Stock Queries (Integration)', () => {
         .send({
           customerId: customer.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 5, unitPrice: 500 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 500 }],
         })
         .expect(201);
 
@@ -370,7 +370,7 @@ describe('Balance & Stock Queries (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 5, unitCost: 1000 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 1000 }],
         paidNow: 3000,
         paymentAccountId: account.id,
       });
@@ -396,7 +396,7 @@ describe('Balance & Stock Queries (Integration)', () => {
 
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 200 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 200 }],
       });
 
       const saleDraft = await request(app.getHttpServer())
@@ -405,7 +405,7 @@ describe('Balance & Stock Queries (Integration)', () => {
         .send({
           customerId: customer.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 5, unitPrice: 500 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 500 }],
         })
         .expect(201);
 
@@ -437,7 +437,7 @@ describe('Balance & Stock Queries (Integration)', () => {
       // Pay supplier 2000 out
       await createAndPostPurchase(app, token, {
         supplierId: supplier.id,
-        lines: [{ productId: product.id, quantity: 10, unitCost: 500 }],
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 500 }],
         paidNow: 2000,
         paymentAccountId: account.id,
       });
@@ -449,7 +449,7 @@ describe('Balance & Stock Queries (Integration)', () => {
         .send({
           customerId: customer.id,
           transactionDate: new Date().toISOString().split('T')[0],
-          lines: [{ productId: product.id, quantity: 5, unitPrice: 700 }],
+          lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 700 }],
         })
         .expect(201);
 
