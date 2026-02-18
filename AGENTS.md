@@ -51,6 +51,7 @@ Transaction (Event) → Posting Engine → Truth Tables (Entries)
  | 6 | Returns + Transfers | ✅ Complete | Returns with strict rules, internal transfers | 
 | 7 | Queries + Hardening | ✅ Complete | Reports, Dashboard, & Imports complete; Hardening deferred |
 | 8 | [Product Variants](Documentation/progress/20260217-ProductVariants-ProgressReport.md) | ✅ Complete | Schema change for product variants and data migration |
+| 9 | [Product Variants UI](Documentation/progress/20260218-ProductVariantsUI-ProgressReport.md) | ✅ Complete | Updated 12 screens to support product variants |
 ### Phase Documentation Locations
 
 ```

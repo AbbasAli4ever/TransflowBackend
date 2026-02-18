@@ -1,8 +1,40 @@
 # Frontend Wireframe Plan
 **Product:** Persona Finance System — Trading Business ERP
 **Audience:** Design agent
-**Total Screens:** 40
+**Total Screens:** 44
 **Stack context:** Web app, sidebar navigation, data-heavy tables, form-heavy entry screens
+
+---
+
+## CHANGELOG
+
+### v1.1 — ProductVariant (2026-02-18)
+**Reason:** Products now have size variants (S / M / L / XL / XXL or custom). A `ProductVariant` is the unit that carries `avgCost` and participates in transactions — not the parent `Product`. Every product has at least one variant; the first is auto-created.
+
+**Screens changed:**
+
+| Screen | Change summary |
+|--------|----------------|
+| 05 — Transaction Detail | Added **Size** column to Transaction Lines table |
+| 06 — Create Purchase | Product line-item selection is now **Product → Size** (two-step dropdown) |
+| 08 — Create Sale | Same as Screen 06 |
+| 12 — Supplier Return | Added **Size** column to returnable lines table |
+| 13 — Customer Return | Same as Screen 12 |
+| 15 — Stock Adjustment | Product line-item now selects **Product + Size** |
+| 26 — Products List | **Avg Cost** and **Current Stock** columns replaced with aggregate totals with "(all sizes)" note; SKU clarified as product-level |
+| 27 — Add Product | Clarified that a default **"one-size"** variant is auto-created; added note about adding more variants from Product Detail |
+| 28 — Product Detail | Stock cards replaced with **per-variant breakdown table**; aggregate totals shown above |
+| 36 — Inventory Valuation | Added **Size** column; rows are now per-variant not per-product |
+
+### v1.2 — Wireframe Review Fixes (2026-02-18)
+**Reason:** Two gaps identified during design review of v1.1 output.
+
+**Screens changed:**
+
+| Screen | Change summary |
+|--------|----------------|
+| 28 — Product Detail | Added **Edit** inline action to per-variant table (edit size label + variant SKU); clarified what is editable |
+| 37 — Imports List | Corrected status filter labels to actual backend enum values: `PENDING_MAPPING / VALIDATED / PROCESSING / COMPLETED / ROLLED_BACK` |
 
 ---
 
@@ -174,7 +206,8 @@ Sidebar (always visible when logged in):
 - Created by + created at timestamp
 
 **Transaction Lines table:**
-- Columns: Product name, Qty, Unit Cost / Unit Price, Discount, Line Total
+- Columns: Product name, **Size**, Qty, Unit Cost / Unit Price, Discount, Line Total
+- "Size" shows the variant size (e.g., "M", "XL", "one-size")
 - Footer row: Subtotal, Discount Total, Delivery Fee, **Total Amount** (bold)
 
 **Payment Info block (below lines, only if applicable):**
@@ -208,12 +241,14 @@ Sidebar (always visible when logged in):
 
 - **Line Items section:**
   - Table with add/remove rows:
-    - Product — searchable dropdown (shows product name, SKU, current stock)
+    - Product — searchable dropdown (shows product name, SKU)
+    - Size / Variant — dependent dropdown (loads after product selected; lists active sizes with current stock hint per size, e.g. "M — 12 in stock")
     - Quantity — number input (min 1)
     - Unit Cost — number input (min 1)
     - Discount — number input (default 0)
     - Line Total — auto-calculated, read-only
   - "+ Add Line" button at bottom of table
+  - Note: backend field sent is `variantId` (the selected variant's ID)
 
 - **Footer fields:**
   - Delivery Fee — number input (default 0)
@@ -272,12 +307,14 @@ Sidebar (always visible when logged in):
   - Notes — textarea (optional)
 
 - **Line Items table:**
-  - Product — searchable dropdown (shows current stock qty as hint)
+  - Product — searchable dropdown (shows product name, SKU)
+  - Size / Variant — dependent dropdown (loads after product selected; shows active sizes with current stock hint per size, e.g. "L — 5 in stock")
   - Quantity — number input
   - Unit Price — number input
   - Discount — number input
   - Line Total — auto-calculated
-  - Stock warning inline if qty exceeds current stock
+  - Stock warning inline if qty exceeds current stock **for that size**
+  - Note: backend field sent is `variantId`
 
 - **Buttons:** "Save as Draft" / "Save & Post"
 
@@ -368,8 +405,9 @@ Sidebar (always visible when logged in):
 - Supplier — searchable dropdown
 - Source Purchase — searchable dropdown (shows only POSTED purchases for selected supplier, with document # and date)
 - After selection: shows available lines from that purchase
-  - Table: Product, Original Qty, Already Returned, Returnable Qty
+  - Table: Product, **Size**, Original Qty, Already Returned, Returnable Qty
   - Return Qty column — number input (max = returnable qty)
+  - Each row is a specific product+size variant
 - Notes — textarea
 - "Continue" button
 
@@ -392,7 +430,7 @@ Sidebar (always visible when logged in):
 **Step 1 — Select Source:**
 - Customer — searchable dropdown
 - Source Sale — dropdown (POSTED sales for this customer)
-- Return lines table (same as supplier return)
+- Return lines table (same as supplier return — includes Product, **Size**, Original Qty, Already Returned, Returnable Qty)
 - Notes — textarea
 - "Continue" button
 
@@ -436,12 +474,14 @@ Sidebar (always visible when logged in):
 - Notes — textarea
 
 **Line Items table:**
-- Product — searchable dropdown (shows current stock)
+- Product — searchable dropdown
+- Size / Variant — dependent dropdown (loads after product selected; shows active sizes)
 - Direction — toggle per row: IN / OUT (color coded: IN=green, OUT=red)
 - Quantity — number input
 - Reason — text input per line (e.g., "Damaged in warehouse")
-- Current Stock shown as hint
-- OUT warning: if adjustment qty exceeds current stock
+- Current Stock for that size shown as hint
+- OUT warning: if adjustment qty exceeds current stock **for that size**
+- Note: backend field sent is `variantId`
 
 **Right panel:**
 - Summary of adjustments (net IN/OUT by product)
@@ -677,13 +717,17 @@ Sidebar (always visible when logged in):
 
 **Table columns:**
 - Name (clickable → product detail)
-- SKU
+- SKU (product-level identifier)
 - Category
 - Unit
-- Avg Cost
-- Current Stock (highlight in red if 0)
+- Total Stock (sum across all sizes; highlight in red if 0)
+- # Sizes (count of active variants, e.g. "5 sizes")
 - Status badge
 - Actions: View / Edit / Change Status
+
+**Notes:**
+- Avg Cost is per-variant and shown in Product Detail, not this list (too many values to summarize meaningfully)
+- Clicking a row goes to Product Detail which shows per-size breakdown
 
 **Top right:**
 - "+ Add Product" button
@@ -698,10 +742,15 @@ Sidebar (always visible when logged in):
 
 **Content:**
 - Name — text input (required)
-- SKU — text input (optional, auto-uppercase)
+- SKU — text input (optional, auto-uppercase; product-level identifier)
 - Category — text input (optional)
 - Unit — text input (optional, e.g., "kg", "bag", "pcs")
 - "Save Product" button / "Cancel"
+
+**Notes:**
+- Saving auto-creates a default **"one-size"** variant in the background (no extra UI step required)
+- To add more sizes (S, M, L, XL, XXL etc.) the user goes to Product Detail → Sizes tab after creation
+- The product cannot participate in transactions until at least one active variant exists (always true after creation)
 
 ---
 
@@ -713,21 +762,24 @@ Sidebar (always visible when logged in):
 
 **Content:**
 
-**Stock cards (3 cards):**
-- Current Stock (qty)
-- Average Cost (per unit)
-- Inventory Value (stock × avg cost)
+**Aggregate summary cards (3 cards — totals across all sizes):**
+- Total Stock (sum of all variant quantities)
+- Total Inventory Value (sum of variant qty × avgCost per variant)
+- Active Sizes (count of active variants)
 
-**Additional info:**
-- Total Purchased (qty, all time)
-- Total Sold (qty, all time)
-- Last Purchase Date
-- Last Sale Date
+**Per-size breakdown table (below the summary cards):**
+- Columns: Size | SKU (variant-level, optional) | Current Stock | Avg Cost | Value (qty × avgCost) | Status badge | Actions
+- **Actions per row:**
+  - **Edit** — inline edit row: change size label (e.g. "M" → "Medium") and/or variant SKU; confirm with checkmark / cancel
+  - **Change Status** — activate or deactivate the size (blocked if stock > 0 for deactivation)
+- Low stock rows highlighted in amber (stock ≤ 5); zero stock rows highlighted in red
+- "Add Size" button above table — opens inline form: Size name input + optional variant SKU
+- Note: size label and variant SKU are the only editable fields post-creation; avgCost is system-managed via purchases
 
 **Tabs:**
 - **Purchase History** — transactions list filtered to PURCHASE type for this product
 - **Sale History** — transactions list filtered to SALE type for this product
-- **Stock Movements** — all adjustments, returns affecting this product
+- **Stock Movements** — all inventory movements (purchase/sale/return/adjustment) per variant with Size column visible
 
 ---
 
@@ -917,14 +969,19 @@ TOTALS                XXX,XXX      XXX,XXX
 
 **Table columns:**
 - Product Name
-- SKU
+- **Size** (variant size, e.g. "M", "XL", "one-size")
+- SKU (variant-level SKU if set, otherwise product SKU)
 - Category
 - Qty on Hand
-- Avg Cost
+- Avg Cost (per unit for this size)
 - Total Value (Qty × Avg Cost)
 
+**Grouping:**
+- Rows grouped by Product Name (show product name only on first row of each group)
+- Sub-total row per product group: Total Qty, Total Value
+
 **Footer:**
-- Total Inventory Value
+- Grand Total Inventory Value
 
 **Top right:**
 - Export button (placeholder)
@@ -941,7 +998,12 @@ TOTALS                XXX,XXX      XXX,XXX
 
 **Filter bar:**
 - Module filter: All / SUPPLIERS / CUSTOMERS / PRODUCTS / OPENING_BALANCES
-- Status filter: All / PENDING / MAPPED / VALIDATED / COMMITTED / ROLLED_BACK
+- Status filter: All / PENDING_MAPPING / VALIDATED / PROCESSING / COMPLETED / ROLLED_BACK
+  - `PENDING_MAPPING` — uploaded, awaiting column mapping
+  - `VALIDATED` — columns mapped, rows validated, ready to commit
+  - `PROCESSING` — commit in progress
+  - `COMPLETED` — all valid rows imported
+  - `ROLLED_BACK` — import undone
 
 **Table columns:**
 - Date
@@ -949,7 +1011,7 @@ TOTALS                XXX,XXX      XXX,XXX
 - File name
 - Total Rows / Success / Failed
 - Status badge
-- Actions: View / Rollback (if committed)
+- Actions: View / Rollback (shown only if status = COMPLETED and rollback is still possible)
 
 **Top right:**
 - "+ New Import" button
