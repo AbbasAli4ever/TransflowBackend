@@ -49,7 +49,7 @@ echo ""
 # Step 3: Run migrations on test database
 echo -e "${YELLOW}Step 3: Running migrations on test database...${NC}"
 
-export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/finance_test"
+export DATABASE_URL="postgresql://zaeemulhassan@localhost:5432/finance_test"
 
 npx prisma migrate deploy || {
     echo -e "${RED}✗ Migrations failed${NC}"
