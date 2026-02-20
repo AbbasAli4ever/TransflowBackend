@@ -506,12 +506,13 @@ export class ReportsService {
             AND t.status = 'POSTED'
         `,
         tx.$queryRaw<
-          Array<{ date: Date; documentNumber: string | null; type: string; debit: bigint; credit: bigint }>
+          Array<{ date: Date; documentNumber: string | null; type: string; description: string | null; debit: bigint; credit: bigint }>
         >`
           SELECT
             t.transaction_date                                                        AS date,
             t.document_number                                                         AS "documentNumber",
             t.type,
+            t.notes                                                                   AS description,
             CASE WHEN le.entry_type = 'AP_INCREASE' THEN le.amount ELSE 0 END::bigint AS debit,
             CASE WHEN le.entry_type = 'AP_DECREASE' THEN le.amount ELSE 0 END::bigint AS credit
           FROM ledger_entries le
@@ -566,12 +567,13 @@ export class ReportsService {
             AND t.status = 'POSTED'
         `,
         tx.$queryRaw<
-          Array<{ date: Date; documentNumber: string | null; type: string; debit: bigint; credit: bigint }>
+          Array<{ date: Date; documentNumber: string | null; type: string; description: string | null; debit: bigint; credit: bigint }>
         >`
           SELECT
             t.transaction_date                                                        AS date,
             t.document_number                                                         AS "documentNumber",
             t.type,
+            t.notes                                                                   AS description,
             CASE WHEN le.entry_type = 'AR_INCREASE' THEN le.amount ELSE 0 END::bigint AS debit,
             CASE WHEN le.entry_type = 'AR_DECREASE' THEN le.amount ELSE 0 END::bigint AS credit
           FROM ledger_entries le
@@ -689,6 +691,7 @@ export class ReportsService {
         date: row.date instanceof Date ? row.date.toISOString().split('T')[0] : row.date,
         documentNumber: row.documentNumber ?? null,
         type: row.type,
+        description: row.description ?? null,
         [inKey as string]: inAmount,
         [outKey as string]: outAmount,
         runningBalance: running,

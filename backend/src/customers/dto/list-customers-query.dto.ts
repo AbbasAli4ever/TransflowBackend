@@ -3,7 +3,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
 export class ListCustomersQueryDto extends PaginationQueryDto {
-  @ApiPropertyOptional({ example: 'zaeem', description: 'Search by name or phone' })
+  @ApiPropertyOptional({ example: '', description: 'Search by name or phone' })
   @IsOptional()
   @IsString()
   search?: string;

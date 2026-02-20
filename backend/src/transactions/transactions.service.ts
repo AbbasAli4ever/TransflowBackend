@@ -220,7 +220,11 @@ export class TransactionsService {
         skip,
         take: limit,
         orderBy: { [sortBy]: sortOrder },
-        include: { transactionLines: { include: { variant: true } } },
+        include: {
+          transactionLines: { include: { variant: true } },
+          supplier: { select: { id: true, name: true } },
+          customer: { select: { id: true, name: true } },
+        },
       }),
       this.prisma.transaction.count({ where }),
     ]);

@@ -61,15 +61,29 @@ describe('CustomersService', () => {
   });
 
   describe('findAll', () => {
-    it('returns paginated list', async () => {
+    it('returns paginated list with currentBalance', async () => {
       const customer = { id: 'cust-1', name: 'Big Corp', tenantId: 'tenant-1' };
       prisma.customer.findMany.mockResolvedValue([customer]);
       prisma.customer.count.mockResolvedValue(1);
+      prisma.$queryRaw.mockResolvedValueOnce([
+        { entity_id: 'cust-1', total_increase: 8000n, total_decrease: 3000n },
+      ]);
 
       const result = await service.findAll({ page: 1, limit: 20 });
 
       expect(result.data).toHaveLength(1);
       expect(result.meta.total).toBe(1);
+      expect(result.data[0]).toHaveProperty('currentBalance', 5000);
+    });
+
+    it('returns empty list without calling balance query', async () => {
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.customer.count.mockResolvedValue(0);
+
+      const result = await service.findAll({ page: 1, limit: 20 });
+
+      expect(result.data).toHaveLength(0);
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
   });
 

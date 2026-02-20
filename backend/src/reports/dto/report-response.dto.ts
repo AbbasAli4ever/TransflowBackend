@@ -257,6 +257,9 @@ export class StatementDebitCreditEntryDto {
   @ApiProperty({ example: 'PURCHASE' })
   type!: string;
 
+  @ApiPropertyOptional({ type: String, example: 'Paid via HBL Business', nullable: true })
+  description?: string | null;
+
   @ApiProperty({ example: 50000, description: 'Debit amount in PKR (integer)' })
   debit!: number;
 

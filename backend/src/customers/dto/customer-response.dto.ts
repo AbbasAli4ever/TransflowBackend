@@ -1,16 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-export class CustomerComputedDto {
-  @ApiProperty({ example: 0, description: 'Derived total sales in PKR (integer)' })
-  totalSales!: number;
-
-  @ApiProperty({ example: 0, description: 'Derived current balance in PKR (integer)' })
-  currentBalance!: number;
-
-  @ApiProperty({ type: String, example: null, nullable: true, format: 'date-time' })
-  lastSaleDate!: string | null;
-}
-
 export class CustomerResponseDto {
   @ApiProperty({ example: '9f4b6e2c-0a2d-4cc5-8c4d-1a4a88c81a88', format: 'uuid' })
   id!: string;
@@ -42,8 +31,8 @@ export class CustomerResponseDto {
   @ApiPropertyOptional({ type: String, example: 'd2f2c7b5-0c2a-4aa2-9c60-6b3f94b7e8d4', format: 'uuid', nullable: true })
   createdBy?: string | null;
 
-  @ApiProperty({ type: CustomerComputedDto })
-  _computed!: CustomerComputedDto;
+  @ApiPropertyOptional({ example: 3000, description: 'Current AR balance in PKR (integer) — present on list responses', nullable: true })
+  currentBalance?: number;
 }
 
 export class CustomerListMetaDto {

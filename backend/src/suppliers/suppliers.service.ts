@@ -5,6 +5,7 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getContext } from '../common/request-context';
 import { safeMoney } from '../common/utils/money';
@@ -64,7 +65,27 @@ export class SuppliersService {
       this.prisma.supplier.count({ where }),
     ]);
 
-    return paginateResponse(suppliers, total, page, limit);
+    if (suppliers.length === 0) return paginateResponse(suppliers, total, page, limit);
+
+    const idsFragment = Prisma.join(suppliers.map((s) => Prisma.sql`${s.id}::uuid`));
+    const balanceRows = await this.prisma.$queryRaw<
+      Array<{ entity_id: string; total_increase: bigint; total_decrease: bigint }>
+    >`
+      SELECT
+        le.supplier_id::text AS entity_id,
+        COALESCE(SUM(CASE WHEN le.entry_type = 'AP_INCREASE' THEN le.amount ELSE 0 END), 0)::bigint AS total_increase,
+        COALESCE(SUM(CASE WHEN le.entry_type = 'AP_DECREASE' THEN le.amount ELSE 0 END), 0)::bigint AS total_decrease
+      FROM ledger_entries le
+      WHERE le.tenant_id = ${tenantId}::uuid
+        AND le.supplier_id IN (${idsFragment})
+      GROUP BY le.supplier_id
+    `;
+    const balanceMap = new Map(
+      balanceRows.map((r) => [r.entity_id, safeMoney(r.total_increase) - safeMoney(r.total_decrease)]),
+    );
+    const data = suppliers.map((s) => ({ ...s, currentBalance: balanceMap.get(s.id) ?? 0 }));
+
+    return paginateResponse(data, total, page, limit);
   }
 
   async findOne(id: string) {

@@ -61,16 +61,30 @@ describe('SuppliersService', () => {
   });
 
   describe('findAll', () => {
-    it('returns paginated list', async () => {
+    it('returns paginated list with currentBalance', async () => {
       const supplier = { id: 'sup-1', name: 'Acme', tenantId: 'tenant-1' };
       prisma.supplier.findMany.mockResolvedValue([supplier]);
       prisma.supplier.count.mockResolvedValue(1);
+      prisma.$queryRaw.mockResolvedValueOnce([
+        { entity_id: 'sup-1', total_increase: 5000n, total_decrease: 2000n },
+      ]);
 
       const result = await service.findAll({ page: 1, limit: 20 });
 
       expect(result.data).toHaveLength(1);
       expect(result.meta.total).toBe(1);
       expect(result.meta.totalPages).toBe(1);
+      expect(result.data[0]).toHaveProperty('currentBalance', 3000);
+    });
+
+    it('returns empty list without calling balance query', async () => {
+      prisma.supplier.findMany.mockResolvedValue([]);
+      prisma.supplier.count.mockResolvedValue(0);
+
+      const result = await service.findAll({ page: 1, limit: 20 });
+
+      expect(result.data).toHaveLength(0);
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
   });
 

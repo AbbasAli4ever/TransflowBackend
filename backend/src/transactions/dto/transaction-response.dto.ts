@@ -86,6 +86,12 @@ export class TransactionResponseDto {
 
   @ApiProperty({ type: [TransactionLineResponseDto] })
   transactionLines!: TransactionLineResponseDto[];
+
+  @ApiPropertyOptional({ type: Object, nullable: true, description: 'Supplier name — present on list responses' })
+  supplier?: { id: string; name: string } | null;
+
+  @ApiPropertyOptional({ type: Object, nullable: true, description: 'Customer name — present on list responses' })
+  customer?: { id: string; name: string } | null;
 }
 
 export class TransactionListMetaDto {
