@@ -4,13 +4,13 @@ services:
     environment:
       POSTGRES_USER: finance
       POSTGRES_PASSWORD: finance_dev
-      POSTGRES_DB: finance_system
+      POSTGRES_DB: finance_system_test
     ports:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U finance -d finance_system"]
+      test: ["CMD-SHELL", "pg_isready -U finance -d finance_system_test"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -20,11 +20,11 @@ services:
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: postgresql://finance:finance_dev@db:5432/finance_system
+      DATABASE_URL: postgresql://finance:finance_dev@db:5432/finance_system_test
       NODE_ENV: development
       PORT: 3000
       API_PREFIX: api/v1
-      CORS_ORIGIN: "*"
+      CORS_ORIGIN: "http://localhost:3001"
       JWT_SECRET: dev-secret-change-in-prod-min-32-chars!!
       JWT_EXPIRATION: 24h
       JWT_REFRESH_SECRET: dev-refresh-secret-change-in-prod!!
@@ -46,7 +46,7 @@ services:
     ports:
       - "5555:5555"
     environment:
-      DATABASE_URL: postgresql://finance:finance_dev@db:5432/finance_system
+      DATABASE_URL: postgresql://finance:finance_dev@db:5432/finance_system_test
     command: sh -c "npx prisma studio --port 5555 --browser none"
     depends_on:
       db:
