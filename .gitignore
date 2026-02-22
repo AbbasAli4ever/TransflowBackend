@@ -12,6 +12,7 @@ yarn.lock
 dist/
 build/
 *.tsbuildinfo
+frontend/
 
 # IDE
 .vscode/

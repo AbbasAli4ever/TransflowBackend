@@ -26,6 +26,8 @@ import {
   ProductVariantResponseDto,
 } from './dto/product-response.dto';
 import { CreateProductVariantDto } from './dto/create-product-variant.dto';
+import { UpdateProductVariantDto } from './dto/update-product-variant.dto';
+import { ProductMovementsResponseDto } from './dto/product-movements-response.dto';
 
 @ApiTags('Products')
 @ApiBearerAuth('bearer')
@@ -104,6 +106,22 @@ export class ProductsController {
     return this.productsService.getStock(id);
   }
 
+  @Get(':id/movements')
+  @ApiOperation({ summary: 'Get paginated inventory movement history for a product (all variants)' })
+  @ApiParam({ name: 'id', description: 'Product UUID' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiOkResponse({ description: 'Paginated movement list with running stock', type: ProductMovementsResponseDto })
+  @ApiNotFoundResponse({ description: 'Product not found', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  getMovements(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('page') page = 1,
+    @Query('limit') limit = 20,
+  ) {
+    return this.productsService.getMovements(id, { page: Number(page), limit: Number(limit) });
+  }
+
   @Post(':id/variants')
   @Roles('OWNER', 'ADMIN')
   @ApiOperation({ summary: 'Add a size variant to a product' })
@@ -115,6 +133,24 @@ export class ProductsController {
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   addVariant(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateProductVariantDto) {
     return this.productsService.addVariant(id, dto);
+  }
+
+  @Patch(':id/variants/:variantId')
+  @Roles('OWNER', 'ADMIN')
+  @ApiOperation({ summary: 'Update variant size label and/or SKU' })
+  @ApiParam({ name: 'id', description: 'Product UUID' })
+  @ApiParam({ name: 'variantId', description: 'Variant UUID' })
+  @ApiOkResponse({ description: 'Variant updated', type: ProductVariantResponseDto })
+  @ApiNotFoundResponse({ description: 'Product or variant not found', type: ApiErrorResponse })
+  @ApiConflictResponse({ description: 'A variant with this size already exists', type: ApiErrorResponse })
+  @ApiBadRequestResponse({ description: 'No fields provided', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  updateVariant(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('variantId', ParseUUIDPipe) variantId: string,
+    @Body() dto: UpdateProductVariantDto,
+  ) {
+    return this.productsService.updateVariant(id, variantId, dto);
   }
 
   @Patch(':id/variants/:variantId/status')

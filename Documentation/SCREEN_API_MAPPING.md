@@ -26,18 +26,35 @@
 | UI Element | Source | API / Notes |
 |---|---|---|
 | Business name input | User input | Maps to `tenantName` |
-| Base currency input | User input | Maps to `baseCurrency` (default: `"PKR"`) |
-| Timezone dropdown | User input | Maps to `timezone` (default: `"Asia/Karachi"`) |
+| Base currency input | User input | Collected on screen — sent in follow-up call (see flow below) |
+| Timezone dropdown | User input | Collected on screen — sent in follow-up call (see flow below) |
 | Full name input | User input | Maps to `fullName` |
 | Email input | User input | Maps to `email` |
 | Password input | User input | Maps to `password` (must pass `@IsStrongPassword`) |
 | Confirm password | User input | **Frontend-only validation** (not sent to API) |
-| "Create Account" button | Action | `POST /api/v1/auth/register` body: `{ tenantName, fullName, email, password, baseCurrency?, timezone? }` |
+| "Create Account" button | Action | Two-step flow — see below |
 | Error: email taken | API response | HTTP 409 → `"Registration failed"` |
 | Validation errors | API response | HTTP 400 with field-level messages |
 
+**Registration flow (two steps, chained):**
+
+**Step 1 — Register:**
+```
+POST /api/v1/auth/register
+{ tenantName, fullName, email, password }
+```
+Returns `{ accessToken, refreshToken, user }`.
+
+**Step 2 — Apply settings (immediately after step 1, using returned `accessToken`):**
+```
+PATCH /api/v1/auth/tenant
+Authorization: Bearer <accessToken>
+{ baseCurrency, timezone }
+```
+`RegisterDto` only accepts the 4 core fields — extra fields cause a 400. `baseCurrency` and `timezone` must be applied via the tenant update endpoint straight after.
+
 **Notes:**
-- `baseCurrency` and `timezone` are optional in the DTO (defaults applied server-side if omitted) — but wireframe shows them, so send them
+- If step 2 fails, the user is still registered — the app should retry silently or let the user update from Settings (Screen 42) later
 - Password strength indicator is **frontend-only** — backend uses `@IsStrongPassword` validator
 
 ---
@@ -71,14 +88,14 @@
 
 | Panel | Response Field | Notes |
 |---|---|---|
-| Recent Activity table | **NOT in dashboard response** | **MISSING API** — dashboard `recentActivity` only has `todaySales`, `todayPurchases`, `todayPayments`, `todayReceipts` (aggregate amounts, no transaction list). Need `GET /api/v1/transactions?limit=10&sortBy=createdAt&sortOrder=desc&status=POSTED` as a separate call |
+| Recent Activity table | Separate API call | `GET /api/v1/transactions?limit=10&sortBy=createdAt&sortOrder=desc&status=POSTED` — returns last 10 POSTED transactions with `supplier.name` / `customer.name` included. Make this call in parallel with `GET /api/v1/dashboard/summary`. |
 | Quick Actions buttons | N/A | Frontend navigation links only |
 
 **Frontend calculations:** None — all values come directly from API.
 
-**GAPS:**
-- Dashboard `recentActivity` returns only today's aggregate totals (todaySales, todayPurchases, todayPayments, todayReceipts) — **no list of recent transactions**. The wireframe wants a "Last 10 transactions" table with Date, Type, Party, Amount, Status. Must use `GET /api/v1/transactions` as a second API call.
-- Dashboard response has no `lowStockCount` sub-label — actually it does: `inventory.lowStockCount` is available.
+**GAPS:** None remaining.
+- Recent transactions: use `GET /api/v1/transactions?limit=10&sortBy=createdAt&sortOrder=desc&status=POSTED` as a second parallel call ✓
+- `inventory.lowStockCount` is available in dashboard response ✓
 - Color indicator (green/red) is **frontend logic** based on sign of values.
 
 ---
@@ -91,7 +108,8 @@
 | Date range filter | Query params | `?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD` |
 | Type filter | Query param | `?type=PURCHASE` (enum: PURCHASE, SALE, SUPPLIER_PAYMENT, CUSTOMER_PAYMENT, SUPPLIER_RETURN, CUSTOMER_RETURN, INTERNAL_TRANSFER, ADJUSTMENT) |
 | Status filter | Query param | `?status=DRAFT` or `?status=POSTED` |
-| Party search | Query param | `?supplierId=uuid` or `?customerId=uuid` |
+| Party search (text) | Query param | `?partySearch=text` — searches supplier OR customer name (case-insensitive). Old UUID filters `?supplierId` and `?customerId` still available. |
+| Product filter | Query param | `?productId=uuid` — filters transactions containing this product in any line |
 | Pagination | Query params | `?page=1&limit=20` |
 | Sort | Query params | `?sortBy=transactionDate&sortOrder=desc` (options: transactionDate, createdAt, totalAmount) |
 
@@ -109,7 +127,8 @@
 
 **GAPS:**
 - **`documentNumber`** — IS in the raw Prisma response but only populated for POSTED transactions. Available in list.
-- **Party search** — wireframe says "text input (searches supplier or customer name)" but API only accepts `supplierId` or `customerId` UUID. Frontend must search suppliers/customers first, then filter by ID.
+- **Party search** ✓ — `?partySearch=text` now available, searches both supplier and customer names case-insensitively.
+- **Product filter** ✓ — `?productId=uuid` now available.
 - **"New Transaction" dropdown** — frontend navigation only.
 - **Reset filters button** — frontend state only.
 - **Page size selector** — use `limit` query param (20/50/100).
@@ -131,7 +150,7 @@
 | Transaction type | `type` | |
 | Date | `transactionDate` | |
 | Party name | `supplier.name` / `customer.name` | `findOne` includes full supplier/customer via Prisma include |
-| Created by + timestamp | `createdAt` | `createdBy` is a UUID — no user name included. Need `GET /api/v1/users/:id` (which doesn't exist) or join with cached user data |
+| Created by + timestamp | `createdByUser.fullName` + `createdAt` | `findOne` now includes `createdByUser: { fullName }` — display name is directly available ✓ |
 
 ### Transaction Lines Table
 
@@ -160,7 +179,7 @@
 | Field | Source | API |
 |---|---|---|
 | Allocations table | Separate API | `GET /api/v1/transactions/allocations?purchaseId=:id` or `?saleId=:id` |
-| Applied to Document # | `allocations[].appliesToTransaction.documentNumber` | **MISSING** — `AllocationTransactionRefDto` has `id`, `transactionDate`, `totalAmount`, `type` but no `documentNumber` |
+| Applied to Document # | `allocations[].appliesToTransaction.documentNumber` | Available ✓ — `AllocationTransactionRefDto` includes `documentNumber` (nullable) |
 | Amount Applied | `allocations[].amountApplied` | |
 
 ### Actions
@@ -168,18 +187,18 @@
 | Action | API | Notes |
 |---|---|---|
 | Post Transaction | `POST /api/v1/transactions/:id/post` | Body: `PostTransactionDto` |
-| Edit | **NO API** | No PATCH endpoint for transactions |
-| Delete Draft | **NO API** | No DELETE endpoint for transactions |
+| Edit (Draft) | `PATCH /api/v1/transactions/:id` | Body: `PatchTransactionDto` — all 8 types supported. PURCHASE/SALE: full line replacement. RETURNS: quantity-only per line. PAYMENTS/TRANSFER: header+amount. ADJUSTMENT: full line replacement. |
+| Delete Draft | `DELETE /api/v1/transactions/:id` | Only DRAFT status allowed; cascades child records. |
 | Print / Export PDF | N/A | Placeholder (no backend) |
 
 **GAPS:**
 - **`documentNumber` OK** — available in `findOne` (null for drafts, populated after posting)
 - **Product name OK** — `findOne` deep includes `variant.product`
 - **Party name OK** — `findOne` includes `supplier`/`customer` objects
-- **`createdBy` user name** — response has `createdBy` UUID but no user profile endpoint to resolve it to a name
+- **`createdByUser` name** ✓ — `findOne` response now includes `createdByUser: { fullName }` directly
 - **Payment entries OK** — `findOne` includes `paymentEntries[]`; payment account name must be joined client-side
-- **No Edit transaction API** — no PATCH endpoint for transactions
-- **No Delete draft API** — no DELETE endpoint for transactions
+- **Edit draft** ✓ — `PATCH /api/v1/transactions/:id` now available for all 8 transaction types
+- **Delete draft** ✓ — `DELETE /api/v1/transactions/:id` now available
 - **Allocation `documentNumber`** — IS available in `AllocationTransactionRefDto` ✓
 
 ---
@@ -270,7 +289,7 @@ Body:
 |---|---|---|
 | Customer dropdown | `customerId` | Populate from `GET /api/v1/customers?status=ACTIVE&limit=100` |
 | Transaction Date | `transactionDate` | |
-| Delivery Type | `deliveryType` | Enum: `NONE` / `DELIVERY` (optional) |
+| Delivery Type | `deliveryType` | Enum: `STORE_PICKUP` / `HOME_DELIVERY` (optional) |
 | Delivery Address | `deliveryAddress` | Max 500 chars |
 | Notes | `notes` | |
 | Product dropdown | — | `GET /api/v1/products?status=ACTIVE` |
@@ -366,8 +385,8 @@ Same pattern as Screen 10, mirrored for customers.
 | Product name | `transactionLines[].productId` | **Need product name** — must join with products cache |
 | Size | `transactionLines[].variantSize` | Available |
 | Original Qty | `transactionLines[].quantity` | |
-| Already Returned | **MISSING** | Backend checks returnable qty at draft time, but doesn't expose "already returned" count per line in any API |
-| Returnable Qty | **MISSING** | Same — backend validates but doesn't tell frontend the remaining returnable qty |
+| Already Returned | `GET /api/v1/transactions/:purchaseId/returnable-lines` → `lines[].alreadyReturned` | Available ✓ |
+| Returnable Qty | Same endpoint → `lines[].returnableQty` | Available ✓ |
 | Return Qty input | `lines[].quantity` in draft DTO | |
 
 **Submit:** `POST /api/v1/transactions/supplier-returns/draft`
@@ -391,8 +410,8 @@ Body:
 | "Confirm Return" | `POST /api/v1/transactions/:id/post` body: `{ idempotencyKey }` |
 
 **GAPS:**
-- **No API to get "already returned" quantity** per transaction line. Frontend can't show "Original Qty / Already Returned / Returnable" without this. Backend validates at draft creation but doesn't expose the data.
-- **No product name** in transaction lines
+- **Returnable lines** ✓ — `GET /api/v1/transactions/:purchaseId/returnable-lines` returns `{ transactionId, lines: [{ lineId, productName, variantSize, originalQty, alreadyReturned, returnableQty }] }`. Only works on POSTED PURCHASE.
+- **Product name** is available in `transactionLines[].variant.product.name` from `GET /api/v1/transactions/:id`.
 
 ---
 
@@ -411,7 +430,7 @@ Same pattern as Screen 12, mirrored for customers.
 1. `POST /api/v1/transactions/customer-returns/draft`
 2. `POST /api/v1/transactions/:id/post` body: `{ idempotencyKey, returnHandling: "REFUND_NOW", paymentAccountId?: "uuid" }`
 
-**GAPS:** Same as Screen 12 — no "already returned" data.
+**GAPS:** None remaining. Use `GET /api/v1/transactions/:saleId/returnable-lines` (POSTED SALE) for returnable qty data ✓.
 
 ---
 
@@ -529,11 +548,27 @@ Body:
 
 | Card | Source | API |
 |---|---|---|
-| Total Purchased | `totalPurchases` | `GET /api/v1/suppliers/:id/balance` |
-| Total Paid | `totalPayments` + `totalReturns` | Same endpoint — `SupplierBalanceResponseDto` has `totalPurchases`, `totalPaid`, `currentBalance`. **NOTE:** Wireframe says "Total Paid" but API has `totalPaid` (which should equal totalPayments per the balance endpoint). Need to check if `totalReturns` is separate. |
-| Current Balance | `currentBalance` | Same endpoint |
+| Total Purchased | `breakdown.purchases.totalAmount` | `GET /api/v1/reports/suppliers/:id/balance` |
+| Total Paid | `breakdown.payments.totalAmount + breakdown.returns.totalAmount` | Same endpoint — payments and returns are separate breakdown keys; sum them for the "Total Paid" card |
+| Current Balance | `breakdown.netPayable` | Same endpoint — positive = PAYABLE |
 
-**Note:** `GET /api/v1/suppliers/:id/balance` returns `{ supplierId, totalPurchases, totalPaid, currentBalance }`. The wireframe's 3 cards map directly. Balance label (PAYABLE/CREDIT/SETTLED) needs **frontend logic**: if currentBalance > 0 → PAYABLE, < 0 → CREDIT, = 0 → SETTLED.
+**Actual response shape:**
+```json
+{
+  "supplierId": "uuid",
+  "supplierName": "Acme Supplies",
+  "asOfDate": "2026-02-20",
+  "balance": 100000,
+  "balanceType": "PAYABLE",
+  "breakdown": {
+    "purchases":  { "count": 5, "totalAmount": 300000 },
+    "payments":   { "count": 3, "totalAmount": 180000 },
+    "returns":    { "count": 1, "totalAmount": 20000 },
+    "netPayable": 100000
+  }
+}
+```
+Balance label (PAYABLE/CREDIT/SETTLED) is returned directly as `balanceType` — no frontend calculation needed.
 
 ### Tabs
 
@@ -608,8 +643,7 @@ Body:
 | "Pay Now" per row | Navigate to Screen 10 pre-filled with `supplierId` and document info |
 
 **GAPS:**
-- **No `documentNumber`** in open documents response
-- **No `daysOutstanding`** — frontend must calculate
+- **No `daysOutstanding`** — not in response; frontend must calculate: `today - transactionDate` in days
 
 ---
 
@@ -640,11 +674,11 @@ Same pattern as Screen 18 (Supplier Detail).
 
 | Card | API Source |
 |---|---|
-| Total Sales | `GET /api/v1/customers/:id/balance` → `totalSales` |
-| Total Received | `totalPayments` + `totalReturns` from balance endpoint |
-| Current Balance | `currentBalance` |
+| Total Sales | `GET /api/v1/reports/customers/:id/balance` → `breakdown.sales.totalAmount` |
+| Total Received | `breakdown.payments.totalAmount + breakdown.returns.totalAmount` | Sum payments and returns |
+| Current Balance | `breakdown.netReceivable` |
 
-**Balance label logic (frontend):** currentBalance > 0 → RECEIVABLE, < 0 → CREDIT, = 0 → SETTLED
+**Balance label** is returned directly as `balanceType` (`RECEIVABLE` / `CREDIT` / `SETTLED`) — no frontend calculation needed.
 
 ---
 
@@ -691,13 +725,11 @@ Same as Screen 20, for customers.
 | SKU | `sku` | Product-level |
 | Category | `category` | |
 | Unit | `unit` | |
-| Total Stock | **MISSING in list** | Product list doesn't include stock data. Need `GET /api/v1/products/:id/stock` per product — N+1 problem |
+| Total Stock | `totalStock` | Batch-aggregated in one `$queryRaw` per page — sum of `currentStock` across all variants. |
 | # Sizes | `variants.length` | Count of variants array (variants are included in product response) |
 | Status badge | `status` | |
 
-**GAPS:**
-- **No stock data in product list response** — `ProductResponseDto` includes `variants[]` with `avgCost` and `status` but NO `currentStock`. Must call `GET /api/v1/products/:id/stock` per product which is N+1.
-- Need either: a **list endpoint that includes stock**, or a **batch stock endpoint**.
+**FIXED:** `totalStock` is now returned on every product in the list response. `variants[].currentStock` is also included per size. One batch `$queryRaw` runs for all variants on the current page (no N+1).
 
 ---
 
@@ -743,7 +775,7 @@ Same as Screen 20, for customers.
 
 | Action | API | Notes |
 |---|---|---|
-| Edit size/SKU | **NO API** | No PATCH endpoint for variant fields (size, sku). Only status change exists. |
+| Edit size/SKU | `PATCH /api/v1/products/:id/variants/:variantId` | Body: `{ size?, sku? }` — 409 if duplicate size within product ✓ |
 | Change Status | `PATCH /api/v1/products/:id/variants/:variantId/status` | Body: `{ status: "INACTIVE" }` |
 | Add Size | `POST /api/v1/products/:id/variants` | Body: `{ size: "XL", sku?: "..." }` |
 
@@ -751,14 +783,14 @@ Same as Screen 20, for customers.
 
 | Tab | API |
 |---|---|
-| Purchase History | `GET /api/v1/transactions?type=PURCHASE&status=POSTED` — **No product filter available** |
-| Sale History | `GET /api/v1/transactions?type=SALE&status=POSTED` — **No product filter** |
-| Stock Movements | **NO API** — No inventory movements endpoint |
+| Purchase History | `GET /api/v1/transactions?type=PURCHASE&status=POSTED&productId=:id` — product filter now available ✓ |
+| Sale History | `GET /api/v1/transactions?type=SALE&status=POSTED&productId=:id` — product filter now available ✓ |
+| Stock Movements | `GET /api/v1/products/:id/movements?page=1&limit=20` — returns `{ data: [{ date, documentNumber, type, variantSize, quantityIn, quantityOut, runningStock }], meta }` ✓ |
 
-**GAPS:**
-- **No PATCH variant endpoint** to edit size label or variant SKU
-- **No product filter** on transactions list — can't filter transactions by productId
-- **No stock movements / inventory movements endpoint** — backend tracks inventory movements in DB but doesn't expose them via API
+**GAPS:** None remaining for this screen.
+- Edit variant ✓ — `PATCH /api/v1/products/:id/variants/:variantId`
+- Product filter on transactions ✓ — `?productId=uuid`
+- Inventory movements ✓ — `GET /api/v1/products/:id/movements`
 
 ---
 
@@ -776,16 +808,16 @@ Same as Screen 20, for customers.
 |---|---|---|
 | Account name | `name` | |
 | Type badge | `type` | |
-| Current Balance | **NOT AVAILABLE in list** | `_computed` was removed. `findAll` is plain `findMany`. Need backend fix (item 2.3 in PENDING_BACKEND_WORK.md). Separate `GET /api/v1/payment-accounts/:id/balance` exists but is N+1. |
-| Opening Balance | `openingBalance` | Available — this is a stored field on the model |
-| Total In / Total Out | **NOT AVAILABLE in list** | Same — was in `_computed`, now removed. Only available via per-account `/balance` endpoint. |
+| Current Balance | `_computed.currentBalance` | Batch-aggregated via one `$queryRaw` per page (no N+1) — `openingBalance + totalIn - totalOut` from posted payment_entries ✓ |
+| Opening Balance | `openingBalance` | Stored field on the model |
+| Total In / Total Out | `_computed.totalIn` / `_computed.totalOut` | Now in list response ✓ |
 | Status badge | `status` | |
 
 ### Top Summary
 
 | Field | Source |
 |---|---|
-| Total across all accounts | **NOT AVAILABLE** — depends on `_computed` fix. Once balance is in list response, frontend sums it. Alternatively use `GET /api/v1/dashboard/summary` → `cash.totalBalance`. |
+| Total across all accounts | Frontend calc — sum `_computed.currentBalance` across all items in list response ✓ |
 
 ### Actions
 
@@ -833,13 +865,13 @@ Same as Screen 20, for customers.
 | Date | `entries[].date` | |
 | Document # | `entries[].documentNumber` | Nullable |
 | Transaction Type | `entries[].type` | |
-| Party | **MISSING** | No party name in statement entries |
+| Party | `entries[].partyName` | Supplier or customer name; `null` for internal transfers ✓ |
 | Money In | `entries[].moneyIn` | |
 | Money Out | `entries[].moneyOut` | |
 | Running Balance | `entries[].runningBalance` | |
 
 **GAPS:**
-- **No party name** in payment account statement entries
+- **Party name** ✓ — `entries[].partyName` now in response (supplier/customer name, null for transfers)
 - Export is placeholder
 
 ---
@@ -849,19 +881,9 @@ Same as Screen 20, for customers.
 | UI Element | Source | API |
 |---|---|---|
 | Date From / Date To | Query params | |
-| "Generate" button | Action | **NO API** — There is no P&L endpoint in the reports module |
+| "Generate" button | Action | `GET /api/v1/reports/profit-loss?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD` ✓ |
 
-**GAP: No P&L report API exists.** The reports module has balance reports, pending reports, and statement reports — but no profit & loss report.
-
-The P&L report needs:
-- `Sales` = sum of SALE totalAmount in date range
-- `Sales Returns` = sum of CUSTOMER_RETURN totalAmount in date range
-- `Net Revenue` = Sales - Sales Returns
-- `Cost of Sales` = sum of costTotal for SALE transaction lines
-- `Gross Profit` = Net Revenue - Cost of Sales
-- `Gross Profit Margin` = Gross Profit / Net Revenue × 100
-
-**Either:** Build a new backend endpoint, OR calculate entirely on frontend using `GET /api/v1/transactions?type=SALE&status=POSTED&dateFrom=...&dateTo=...` plus `?type=CUSTOMER_RETURN` — but this requires iterating all transactions to sum costTotal, which is not practical.
+**RESOLVED ✓** — `GET /api/v1/reports/profit-loss` returns `{ dateFrom, dateTo, sales, salesReturns, netRevenue, costOfGoodsSold, grossProfit, grossProfitMargin }`. COGS is sourced from `inventory_movements` (SALE_OUT minus CUSTOMER_RETURN_IN unit costs).
 
 ---
 
@@ -904,21 +926,9 @@ Same pattern as Screen 33, for suppliers.
 | UI Element | Source | API |
 |---|---|---|
 | As of Date | Query param | |
-| "Generate" button | Action | **NO API** — No trial balance endpoint exists |
+| "Generate" button | Action | `GET /api/v1/reports/trial-balance?asOfDate=YYYY-MM-DD` ✓ |
 
-**GAP: No Trial Balance API.** The wireframe shows:
-- Accounts Receivable (debit)
-- Accounts Payable (credit)
-- Cash accounts (credit)
-- Inventory (debit)
-
-**Workaround:** Frontend can construct this from multiple API calls:
-1. AR total → `GET /api/v1/reports/pending-receivables?asOfDate=...` → `totalReceivables`
-2. AP total → `GET /api/v1/reports/pending-payables?asOfDate=...` → `totalPayables` (need to check field name)
-3. Cash totals → `GET /api/v1/dashboard/summary?asOfDate=...` → `cash.totalBalance`
-4. Inventory → `GET /api/v1/dashboard/summary?asOfDate=...` → `inventory.totalValue`
-
-This is hacky but works since the wireframe only shows 4 account lines.
+**RESOLVED ✓** — `GET /api/v1/reports/trial-balance` returns `{ asOfDate, accounts: [{ name, debit, credit }], totalDebit, totalCredit }`. Accounts include AR (from ledger_entries), AP (from ledger_entries), each active payment account (from payment_entries), and Inventory (from inventory_movements).
 
 ---
 
@@ -927,13 +937,9 @@ This is hacky but works since the wireframe only shows 4 account lines.
 | UI Element | Source | API |
 |---|---|---|
 | As of Date | Query param | |
-| "Generate" button | Action | **NO API** — No inventory valuation endpoint exists |
+| "Generate" button | Action | `GET /api/v1/reports/inventory-valuation?asOfDate=YYYY-MM-DD` ✓ |
 
-**GAP: No Inventory Valuation report API.** Needs per-variant stock × avgCost as of a date.
-
-**Workaround:** Could use `GET /api/v1/reports/products/:id/stock?asOfDate=...` per product — but that's N+1 and only works if you know all product IDs.
-
-**Needs:** A new `GET /api/v1/reports/inventory-valuation?asOfDate=YYYY-MM-DD` endpoint that returns all products with per-variant stock and valuation.
+**RESOLVED ✓** — `GET /api/v1/reports/inventory-valuation` returns `{ asOfDate, grandTotalValue, products: [{ productId, productName, sku, category, variants: [{ variantId, size, sku, qtyOnHand, avgCost, totalValue }], productTotalQty, productTotalValue }] }`.
 
 ---
 
@@ -987,14 +993,13 @@ This is hacky but works since the wireframe only shows 4 account lines.
 |---|---|---|
 | Detected columns | `detectedColumns[]` from upload response | |
 | Required fields | `requiredFields[]` from upload response | Each has `{ field, required }` |
-| Sample values preview | **MISSING** | API doesn't return sample row values in upload response |
+| Sample values preview | `sampleValues[columnHeader]` from upload response | `POST /api/v1/imports` now returns `sampleValues: Record<string, string[]>` — up to 2 sample values per detected column ✓ |
 | Column mapping dropdowns | User input → `columnMappings` | Map system field → CSV header |
 | "Next: Preview" button | `POST /api/v1/imports/:id/map` body: `{ columnMappings: { name: "Company Name", phone: "Phone" } }` | |
 
 **Response:** `ImportMapResponseDto` with `validRows`, `invalidRows`, `errors[]`, `preview[]`
 
-**GAPS:**
-- **No sample values** in upload response — wireframe wants "first 2 sample values" shown next to each detected column. The upload response only has header names.
+**GAPS:** None remaining — sample values now available in upload response ✓
 
 ---
 
@@ -1024,7 +1029,7 @@ This is hacky but works since the wireframe only shows 4 account lines.
 | Status badge | `status` | |
 | File name | `fileName` | |
 | Committed at | `updatedAt` | **No specific `committedAt` field** — use `updatedAt` |
-| Committed by | **MISSING** | No `createdBy` field in import batch |
+| Committed by | `createdByUser.fullName` | `GET /api/v1/imports/:id` now includes `createdByUser: { fullName }` ✓ |
 
 ### Summary Cards
 
@@ -1050,8 +1055,7 @@ This is hacky but works since the wireframe only shows 4 account lines.
 |---|---|
 | Rollback Import | `POST /api/v1/imports/:id/rollback` |
 
-**GAPS:**
-- **No `committedBy` / `createdBy`** in import detail
+**GAPS:** None remaining — `createdByUser: { fullName }` now included in import detail response ✓
 
 ---
 
@@ -1062,9 +1066,9 @@ This is hacky but works since the wireframe only shows 4 account lines.
 | Business Name | `user.tenant.name` from auth response | |
 | Base Currency | `user.tenant.baseCurrency` | Read-only |
 | Timezone | `user.tenant.timezone` | |
-| "Save Changes" | **NO API** | No PATCH endpoint for tenant settings |
+| "Save Changes" | `PATCH /api/v1/auth/tenant` | Body: `{ name?, timezone?, baseCurrency? }` — OWNER role required ✓ |
 
-**GAP: No tenant update API.** Cannot save business profile changes.
+**RESOLVED ✓** — `PATCH /api/v1/auth/tenant` saves business profile changes.
 
 ---
 
@@ -1072,12 +1076,12 @@ This is hacky but works since the wireframe only shows 4 account lines.
 
 | UI Element | Source | Notes |
 |---|---|---|
-| Users table | **NO API** | No `GET /api/v1/users` or tenant users list endpoint |
-| Change Role | **NO API** | No role change endpoint |
-| Deactivate | **NO API** | No user deactivation endpoint |
+| Users table | `GET /api/v1/users?status=ACTIVE&page=1&limit=20` | Returns paginated list: `{ id, tenantId, fullName, email, role, status, createdAt }` — no passwordHash ✓ |
+| Change Role | `PATCH /api/v1/users/:id/role` | Body: `{ role: "OWNER"|"ADMIN" }` — OWNER only; cannot change own role ✓ |
+| Deactivate | `PATCH /api/v1/users/:id/status` | Body: `{ status: "INACTIVE" }` — cannot deactivate self or last active OWNER ✓ |
 | Invite User | **NO API** | Placeholder (noted in wireframe) |
 
-**GAP: No user management API.** Backend has auth (register/login) but no user list, role management, or user deactivation endpoints.
+**RESOLVED ✓** — Full user management available. Cannot deactivate yourself or the last active OWNER.
 
 ---
 

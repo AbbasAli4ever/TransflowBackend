@@ -20,30 +20,35 @@ export function getTestPrismaClient(): PrismaClient {
 }
 
 /**
- * Clean all data from database tables while preserving schema
+ * Clean all data from database tables while preserving schema.
+ * Uses TRUNCATE ... CASCADE for atomicity and FK-safety.
+ * RESTART IDENTITY resets auto-increment sequences.
+ * Adding new tables to the schema does NOT require updating this function.
  */
 export async function cleanDatabase() {
   const client = getTestPrismaClient();
-
-  // Delete in correct order to respect foreign key constraints
-  await client.importRow.deleteMany();
-  await client.importBatch.deleteMany();
-  await client.allocation.deleteMany();
-  await client.paymentEntry.deleteMany();
-  await client.ledgerEntry.deleteMany();
-  await client.inventoryMovement.deleteMany();
-  await client.transactionLine.deleteMany();
-  await client.transaction.deleteMany();
-  await client.documentSequence.deleteMany();
-  await client.paymentAccount.deleteMany();
-  await client.productVariant.deleteMany();
-  await client.product.deleteMany();
-  await client.statusChangeLog.deleteMany();
-  await client.customer.deleteMany();
-  await client.supplier.deleteMany();
-  await client.refreshToken.deleteMany();
-  await client.user.deleteMany();
-  await client.tenant.deleteMany();
+  await client.$executeRaw`
+    TRUNCATE TABLE
+      import_rows,
+      import_batches,
+      allocations,
+      payment_entries,
+      ledger_entries,
+      inventory_movements,
+      transaction_lines,
+      transactions,
+      document_sequences,
+      payment_accounts,
+      product_variants,
+      products,
+      status_change_logs,
+      customers,
+      suppliers,
+      refresh_tokens,
+      users,
+      tenants
+    RESTART IDENTITY CASCADE
+  `;
 }
 
 /**

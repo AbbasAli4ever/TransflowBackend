@@ -627,16 +627,19 @@ export class ReportsService {
             AND pe.transaction_date < ${dateFrom}::date
         `,
         tx.$queryRaw<
-          Array<{ date: Date; documentNumber: string | null; type: string; moneyIn: bigint; moneyOut: bigint }>
+          Array<{ date: Date; documentNumber: string | null; type: string; moneyIn: bigint; moneyOut: bigint; partyName: string | null }>
         >`
           SELECT
             pe.transaction_date                                               AS date,
             t.document_number                                                 AS "documentNumber",
             t.type,
             CASE WHEN pe.direction = 'IN'  THEN pe.amount ELSE 0 END::bigint AS "moneyIn",
-            CASE WHEN pe.direction = 'OUT' THEN pe.amount ELSE 0 END::bigint AS "moneyOut"
+            CASE WHEN pe.direction = 'OUT' THEN pe.amount ELSE 0 END::bigint AS "moneyOut",
+            COALESCE(s.name, c.name)                                          AS "partyName"
           FROM payment_entries pe
           JOIN transactions t ON t.id = pe.transaction_id AND t.status = 'POSTED'
+          LEFT JOIN suppliers s ON s.id = pe.supplier_id
+          LEFT JOIN customers c ON c.id = pe.customer_id
           WHERE pe.tenant_id = ${tenantId}::uuid
             AND pe.payment_account_id = ${id}::uuid
             AND pe.transaction_date >= ${dateFrom}::date
@@ -648,7 +651,21 @@ export class ReportsService {
     );
 
     const openingBalance = account.openingBalance + safeMoney(historicalRows[0].historicalBalance);
-    const entries = this.buildRunningBalance(openingBalance, entryRows, 'moneyIn', 'moneyOut');
+    let running = openingBalance;
+    const entries = entryRows.map((row) => {
+      const moneyIn = safeMoney(row.moneyIn);
+      const moneyOut = safeMoney(row.moneyOut);
+      running = running + moneyIn - moneyOut;
+      return {
+        date: row.date instanceof Date ? row.date.toISOString().split('T')[0] : row.date,
+        documentNumber: row.documentNumber ?? null,
+        type: row.type,
+        partyName: row.partyName ?? null,
+        moneyIn,
+        moneyOut,
+        runningBalance: running,
+      };
+    });
     const closingBalance = entries.length > 0 ? entries[entries.length - 1].runningBalance : openingBalance;
 
     return {
@@ -660,6 +677,222 @@ export class ReportsService {
       closingBalance,
       entries,
     };
+  }
+
+  // ─── EP-10: Profit & Loss Report ────────────────────────────────────────────
+
+  async getProfitLoss(query: StatementQueryDto) {
+    const tenantId = this.requireTenantId();
+    const { dateFrom, dateTo } = query;
+
+    const [revenueRows, cogsRows] = await Promise.all([
+      this.prisma.$queryRaw<Array<{ sales: bigint; salesReturns: bigint }>>`
+        SELECT
+          COALESCE(SUM(CASE WHEN t.type = 'SALE'            THEN t.total_amount ELSE 0 END), 0)::bigint AS sales,
+          COALESCE(SUM(CASE WHEN t.type = 'CUSTOMER_RETURN' THEN t.total_amount ELSE 0 END), 0)::bigint AS "salesReturns"
+        FROM transactions t
+        WHERE t.tenant_id = ${tenantId}::uuid
+          AND t.status = 'POSTED'
+          AND t.type IN ('SALE', 'CUSTOMER_RETURN')
+          AND t.transaction_date BETWEEN ${dateFrom}::date AND ${dateTo}::date
+      `,
+      this.prisma.$queryRaw<Array<{ cogs: bigint }>>`
+        SELECT
+          COALESCE(
+            SUM(CASE WHEN im.movement_type = 'SALE_OUT'           THEN im.unit_cost_at_time * im.quantity ELSE 0 END)
+            - SUM(CASE WHEN im.movement_type = 'CUSTOMER_RETURN_IN' THEN im.unit_cost_at_time * im.quantity ELSE 0 END),
+            0
+          )::bigint AS cogs
+        FROM inventory_movements im
+        WHERE im.tenant_id = ${tenantId}::uuid
+          AND im.movement_type IN ('SALE_OUT', 'CUSTOMER_RETURN_IN')
+          AND im.transaction_date BETWEEN ${dateFrom}::date AND ${dateTo}::date
+      `,
+    ]);
+
+    const sales = safeMoney(revenueRows[0].sales);
+    const salesReturns = safeMoney(revenueRows[0].salesReturns);
+    const cogs = safeMoney(cogsRows[0].cogs);
+    const netRevenue = sales - salesReturns;
+    const grossProfit = netRevenue - cogs;
+    const grossProfitMargin = netRevenue > 0 ? Math.round((grossProfit / netRevenue) * 10000) / 100 : 0;
+
+    return { dateFrom, dateTo, sales, salesReturns, netRevenue, costOfGoodsSold: cogs, grossProfit, grossProfitMargin };
+  }
+
+  // ─── EP-11: Inventory Valuation Report ──────────────────────────────────────
+
+  async getInventoryValuation(query: BalanceQueryDto) {
+    const tenantId = this.requireTenantId();
+    const asOfDate = query.asOfDate ?? await this.getBusinessDate(tenantId);
+
+    const rows = await this.prisma.$queryRaw<Array<{
+      productId: string;
+      productName: string;
+      sku: string | null;
+      category: string | null;
+      variantId: string;
+      size: string;
+      variantSku: string | null;
+      qtyOnHand: bigint;
+      totalPurchaseCost: bigint;
+      totalPurchaseQty: bigint;
+      totalReturnCost: bigint;
+      totalReturnQty: bigint;
+    }>>`
+      SELECT
+        p.id::text                                                                                                    AS "productId",
+        p.name                                                                                                        AS "productName",
+        p.sku,
+        p.category,
+        pv.id::text                                                                                                   AS "variantId",
+        pv.size,
+        pv.sku                                                                                                        AS "variantSku",
+        COALESCE(
+          SUM(CASE WHEN im.movement_type IN ('PURCHASE_IN','CUSTOMER_RETURN_IN','ADJUSTMENT_IN')     THEN im.quantity ELSE 0 END)
+          - SUM(CASE WHEN im.movement_type IN ('SALE_OUT','SUPPLIER_RETURN_OUT','ADJUSTMENT_OUT')    THEN im.quantity ELSE 0 END),
+          0
+        )::bigint                                                                                                     AS "qtyOnHand",
+        COALESCE(SUM(CASE WHEN im.movement_type = 'PURCHASE_IN'         THEN im.unit_cost_at_time * im.quantity ELSE 0 END), 0)::bigint AS "totalPurchaseCost",
+        COALESCE(SUM(CASE WHEN im.movement_type = 'PURCHASE_IN'         THEN im.quantity ELSE 0 END), 0)::bigint                       AS "totalPurchaseQty",
+        COALESCE(SUM(CASE WHEN im.movement_type = 'SUPPLIER_RETURN_OUT' THEN im.unit_cost_at_time * im.quantity ELSE 0 END), 0)::bigint AS "totalReturnCost",
+        COALESCE(SUM(CASE WHEN im.movement_type = 'SUPPLIER_RETURN_OUT' THEN im.quantity ELSE 0 END), 0)::bigint                       AS "totalReturnQty"
+      FROM products p
+      JOIN product_variants pv ON pv.product_id = p.id AND pv.tenant_id = ${tenantId}::uuid AND pv.status = 'ACTIVE'
+      LEFT JOIN inventory_movements im ON im.variant_id = pv.id
+        AND im.tenant_id = ${tenantId}::uuid
+        AND im.transaction_date <= ${asOfDate}::date
+      WHERE p.tenant_id = ${tenantId}::uuid AND p.status = 'ACTIVE'
+      GROUP BY p.id, p.name, p.sku, p.category, pv.id, pv.size, pv.sku
+      ORDER BY p.name, pv.size
+    `;
+
+    // Group rows by product, compute avgCost in TypeScript (consistent with getProductStock)
+    const productMap = new Map<string, {
+      productId: string; productName: string; sku: string | null; category: string | null;
+      variants: { variantId: string; size: string; sku: string | null; qtyOnHand: number; avgCost: number; totalValue: number }[];
+      productTotalQty: number; productTotalValue: number;
+    }>();
+
+    for (const row of rows) {
+      const qtyOnHand = safeMoney(row.qtyOnHand);
+      const netCostPool = safeMoney(row.totalPurchaseCost) - safeMoney(row.totalReturnCost);
+      const netQtyPool = safeMoney(row.totalPurchaseQty) - safeMoney(row.totalReturnQty);
+      const avgCost = netQtyPool > 0 ? Math.round(netCostPool / netQtyPool) : 0;
+      const totalValue = qtyOnHand * avgCost;
+
+      let product = productMap.get(row.productId);
+      if (!product) {
+        product = {
+          productId: row.productId,
+          productName: row.productName,
+          sku: row.sku ?? null,
+          category: row.category ?? null,
+          variants: [],
+          productTotalQty: 0,
+          productTotalValue: 0,
+        };
+        productMap.set(row.productId, product);
+      }
+      product.variants.push({ variantId: row.variantId, size: row.size, sku: row.variantSku ?? null, qtyOnHand, avgCost, totalValue });
+      product.productTotalQty += qtyOnHand;
+      product.productTotalValue += totalValue;
+    }
+
+    const products = Array.from(productMap.values());
+    const grandTotalValue = products.reduce((sum, p) => sum + p.productTotalValue, 0);
+
+    return { asOfDate, grandTotalValue, products };
+  }
+
+  // ─── EP-12: Trial Balance Report ─────────────────────────────────────────────
+
+  async getTrialBalance(query: BalanceQueryDto) {
+    const tenantId = this.requireTenantId();
+    const asOfDate = query.asOfDate ?? await this.getBusinessDate(tenantId);
+
+    const [arApRows, paymentAccountRows, inventoryRows] = await Promise.all([
+      // AR and AP net balances from ledger entries
+      this.prisma.$queryRaw<Array<{ net_ar: bigint; net_ap: bigint }>>`
+        SELECT
+          COALESCE(SUM(CASE WHEN le.entry_type = 'AR_INCREASE' THEN le.amount ELSE 0 END), 0)
+          - COALESCE(SUM(CASE WHEN le.entry_type = 'AR_DECREASE' THEN le.amount ELSE 0 END), 0) AS net_ar,
+          COALESCE(SUM(CASE WHEN le.entry_type = 'AP_INCREASE' THEN le.amount ELSE 0 END), 0)
+          - COALESCE(SUM(CASE WHEN le.entry_type = 'AP_DECREASE' THEN le.amount ELSE 0 END), 0) AS net_ap
+        FROM ledger_entries le
+        JOIN transactions t ON t.id = le.transaction_id
+        WHERE le.tenant_id = ${tenantId}::uuid
+          AND t.status = 'POSTED'
+          AND le.transaction_date <= ${asOfDate}::date
+      `,
+      // Payment account balances (one row per active account)
+      this.prisma.$queryRaw<Array<{ name: string; opening_balance: bigint; total_in: bigint; total_out: bigint }>>`
+        SELECT
+          pa.name,
+          pa.opening_balance::bigint,
+          COALESCE(SUM(CASE WHEN pe.direction = 'IN'  THEN pe.amount ELSE 0 END), 0)::bigint AS total_in,
+          COALESCE(SUM(CASE WHEN pe.direction = 'OUT' THEN pe.amount ELSE 0 END), 0)::bigint AS total_out
+        FROM payment_accounts pa
+        LEFT JOIN payment_entries pe
+          ON pe.payment_account_id = pa.id
+          AND pe.transaction_date <= ${asOfDate}::date
+          AND EXISTS (
+            SELECT 1 FROM transactions t
+            WHERE t.id = pe.transaction_id AND t.status = 'POSTED'
+          )
+        WHERE pa.tenant_id = ${tenantId}::uuid
+          AND pa.status = 'ACTIVE'
+        GROUP BY pa.id, pa.name, pa.opening_balance
+        ORDER BY pa.name
+      `,
+      // Net inventory value from inventory movements
+      this.prisma.$queryRaw<Array<{ net_inventory_value: bigint }>>`
+        SELECT
+          COALESCE(SUM(
+            CASE WHEN im.movement_type IN ('PURCHASE_IN', 'ADJUSTMENT_IN', 'CUSTOMER_RETURN_IN')
+                 THEN im.quantity * im.unit_cost_at_time
+                 ELSE -(im.quantity * im.unit_cost_at_time)
+            END
+          ), 0)::bigint AS net_inventory_value
+        FROM inventory_movements im
+        WHERE im.tenant_id = ${tenantId}::uuid
+          AND im.movement_date <= ${asOfDate}::date
+      `,
+    ]);
+
+    const netAr = safeMoney(arApRows[0].net_ar);
+    const netAp = safeMoney(arApRows[0].net_ap);
+    const netInventory = safeMoney(inventoryRows[0].net_inventory_value);
+
+    const accounts: Array<{ name: string; debit: number; credit: number }> = [];
+
+    // AR — debit when positive (customers owe us)
+    if (netAr !== 0) {
+      accounts.push({ name: 'Accounts Receivable', debit: netAr > 0 ? netAr : 0, credit: netAr < 0 ? -netAr : 0 });
+    }
+
+    // AP — credit when positive (we owe suppliers)
+    if (netAp !== 0) {
+      accounts.push({ name: 'Accounts Payable', debit: netAp < 0 ? -netAp : 0, credit: netAp > 0 ? netAp : 0 });
+    }
+
+    // Payment accounts
+    for (const row of paymentAccountRows) {
+      const balance = safeMoney(row.opening_balance) + safeMoney(row.total_in) - safeMoney(row.total_out);
+      if (balance !== 0) {
+        accounts.push({ name: row.name, debit: balance > 0 ? balance : 0, credit: balance < 0 ? -balance : 0 });
+      }
+    }
+
+    // Inventory — debit when positive
+    if (netInventory !== 0) {
+      accounts.push({ name: 'Inventory', debit: netInventory > 0 ? netInventory : 0, credit: netInventory < 0 ? -netInventory : 0 });
+    }
+
+    const totalDebit = accounts.reduce((sum, a) => sum + a.debit, 0);
+    const totalCredit = accounts.reduce((sum, a) => sum + a.credit, 0);
+
+    return { asOfDate, accounts, totalDebit, totalCredit };
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────

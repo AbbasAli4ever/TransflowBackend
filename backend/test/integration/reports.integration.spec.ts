@@ -1069,4 +1069,283 @@ describe('Reports (Integration)', () => {
       }
     });
   });
+
+  // ─── EP-10: Profit & Loss Report ────────────────────────────────────────────
+
+  describe('GET /api/v1/reports/profit-loss', () => {
+    it('returns all zeroes when no transactions exist', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/reports/profit-loss?dateFrom=2026-01-01&dateTo=2026-01-31')
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.sales).toBe(0);
+      expect(res.body.salesReturns).toBe(0);
+      expect(res.body.netRevenue).toBe(0);
+      expect(res.body.costOfGoodsSold).toBe(0);
+      expect(res.body.grossProfit).toBe(0);
+      expect(res.body.grossProfitMargin).toBe(0);
+      expect(res.body.dateFrom).toBe('2026-01-01');
+      expect(res.body.dateTo).toBe('2026-01-31');
+    });
+
+    it('correctly sums sales and excludes DRAFT transactions', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+
+      // Post a purchase first so we have stock and cost
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
+        transactionDate: '2026-01-05',
+      });
+
+      // Post a sale of 5 units at 2000 each → revenue 10000, COGS = 5 * 1000 = 5000
+      await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitPrice: 2000 }],
+        transactionDate: '2026-01-10',
+        paymentAccountId: account.id,
+        receivedNow: 0,
+      });
+
+      // Create a draft sale (must be excluded)
+      await request(app.getHttpServer())
+        .post('/api/v1/transactions')
+        .set(authHeader(token))
+        .send({
+          type: 'SALE',
+          customerId: customer.id,
+          transactionDate: '2026-01-15',
+          lines: [{ variantId: product.variants[0].id, quantity: 2, unitPrice: 2000 }],
+        });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/reports/profit-loss?dateFrom=2026-01-01&dateTo=2026-01-31')
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.sales).toBe(10000);
+      expect(res.body.salesReturns).toBe(0);
+      expect(res.body.netRevenue).toBe(10000);
+      expect(res.body.costOfGoodsSold).toBe(5000);
+      expect(res.body.grossProfit).toBe(5000);
+      expect(res.body.grossProfitMargin).toBe(50);
+    });
+
+    it('salesReturns reduces netRevenue and COGS reduced by customer return cost', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
+        transactionDate: '2026-01-05',
+      });
+
+      const sale = await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ variantId: product.variants[0].id, quantity: 6, unitPrice: 2000 }],
+        transactionDate: '2026-01-10',
+        paymentAccountId: account.id,
+        receivedNow: 0,
+      });
+
+      // Return 2 units (revenue returned = 4000)
+      await createAndPostCustomerReturn(app, token, {
+        customerId: customer.id,
+        lines: [{ sourceTransactionLineId: sale.transactionLines[0].id, quantity: 2 }],
+        transactionDate: '2026-01-20',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/reports/profit-loss?dateFrom=2026-01-01&dateTo=2026-01-31')
+        .set(authHeader(token))
+        .expect(200);
+
+      // sales = 6 * 2000 = 12000; salesReturns = 2 * 2000 = 4000; netRevenue = 8000
+      expect(res.body.sales).toBe(12000);
+      expect(res.body.salesReturns).toBe(4000);
+      expect(res.body.netRevenue).toBe(8000);
+      // COGS = SALE_OUT (6*1000=6000) - CUSTOMER_RETURN_IN (2*1000=2000) = 4000
+      expect(res.body.costOfGoodsSold).toBe(4000);
+      expect(res.body.grossProfit).toBe(4000);
+      expect(res.body.grossProfitMargin).toBe(50);
+    });
+
+    it('grossProfitMargin is 0 when netRevenue is 0 (no divide-by-zero)', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/reports/profit-loss?dateFrom=2025-01-01&dateTo=2025-01-31')
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.netRevenue).toBe(0);
+      expect(res.body.grossProfitMargin).toBe(0);
+    });
+
+    it('dateFrom/dateTo filter excludes out-of-range transactions', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const customer = await createTestCustomer(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
+        transactionDate: '2026-01-05',
+      });
+
+      // Sale in January (in range)
+      await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ variantId: product.variants[0].id, quantity: 2, unitPrice: 2000 }],
+        transactionDate: '2026-01-15',
+        paymentAccountId: account.id,
+        receivedNow: 0,
+      });
+
+      // Sale in February (out of range)
+      await createAndPostSale(app, token, {
+        customerId: customer.id,
+        lines: [{ variantId: product.variants[0].id, quantity: 3, unitPrice: 2000 }],
+        transactionDate: '2026-02-05',
+        paymentAccountId: account.id,
+        receivedNow: 0,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/reports/profit-loss?dateFrom=2026-01-01&dateTo=2026-01-31')
+        .set(authHeader(token))
+        .expect(200);
+
+      // Only Jan sale: 2 * 2000 = 4000
+      expect(res.body.sales).toBe(4000);
+      expect(res.body.costOfGoodsSold).toBe(2000);
+    });
+
+    it('returns 400 if dateFrom or dateTo is missing', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/reports/profit-loss?dateFrom=2026-01-01')
+        .set(authHeader(token))
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .get('/api/v1/reports/profit-loss?dateTo=2026-01-31')
+        .set(authHeader(token))
+        .expect(400);
+    });
+  });
+
+  // ─── EP-11: Inventory Valuation Report ──────────────────────────────────────
+
+  describe('GET /api/v1/reports/inventory-valuation', () => {
+    it('returns empty products array when no active products exist', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/reports/inventory-valuation?asOfDate=2026-02-20')
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.grandTotalValue).toBe(0);
+      expect(res.body.products).toHaveLength(0);
+      expect(res.body.asOfDate).toBe('2026-02-20');
+    });
+
+    it('correctly computes qtyOnHand, avgCost, and totalValue per variant', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      // Purchase 10 units at 1000 each
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
+        transactionDate: '2026-01-05',
+      });
+
+      // Purchase 5 more units at 2000 each (avgCost = (10000+10000)/15 = 1333)
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ variantId: product.variants[0].id, quantity: 5, unitCost: 2000 }],
+        transactionDate: '2026-01-10',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/reports/inventory-valuation?asOfDate=2026-02-20')
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.products).toHaveLength(1);
+      const p = res.body.products[0];
+      expect(p.productId).toBe(product.id);
+      expect(p.productName).toBe(product.name);
+      expect(p.productTotalQty).toBe(15);
+
+      const v = p.variants[0];
+      expect(v.variantId).toBe(product.variants[0].id);
+      expect(v.qtyOnHand).toBe(15);
+      // avgCost = round((10000 + 10000) / 15) = round(1333.33) = 1333
+      expect(v.avgCost).toBe(1333);
+      expect(v.totalValue).toBe(15 * 1333);
+      expect(p.productTotalValue).toBe(15 * 1333);
+      expect(res.body.grandTotalValue).toBe(15 * 1333);
+    });
+
+    it('asOfDate excludes movements after that date', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+
+      // Purchase on Jan 5
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ variantId: product.variants[0].id, quantity: 10, unitCost: 1000 }],
+        transactionDate: '2026-01-05',
+      });
+
+      // Purchase on Feb 5 (should be excluded when asOfDate=2026-01-31)
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ variantId: product.variants[0].id, quantity: 20, unitCost: 500 }],
+        transactionDate: '2026-02-05',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/reports/inventory-valuation?asOfDate=2026-01-31')
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.products).toHaveLength(1);
+      const v = res.body.products[0].variants[0];
+      expect(v.qtyOnHand).toBe(10);
+      expect(v.avgCost).toBe(1000);
+    });
+
+    it('grandTotalValue equals sum of all product total values', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product1 = await createTestProduct(prisma, tenantId, userId);
+      const product2 = await createTestProduct(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [
+          { variantId: product1.variants[0].id, quantity: 5, unitCost: 1000 },
+          { variantId: product2.variants[0].id, quantity: 4, unitCost: 2000 },
+        ],
+        transactionDate: '2026-01-05',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/reports/inventory-valuation?asOfDate=2026-02-20')
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.products).toHaveLength(2);
+      const totalFromProducts = res.body.products.reduce((sum: number, p: any) => sum + p.productTotalValue, 0);
+      expect(res.body.grandTotalValue).toBe(totalFromProducts);
+      // product1: 5 * 1000 = 5000; product2: 4 * 2000 = 8000; grand = 13000
+      expect(res.body.grandTotalValue).toBe(13000);
+    });
+  });
 });

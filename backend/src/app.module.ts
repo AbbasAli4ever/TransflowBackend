@@ -13,6 +13,7 @@ import { TransactionsModule } from './transactions/transactions.module';
 import { ReportsModule } from './reports/reports.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ImportsModule } from './imports/imports.module';
+import { UsersModule } from './users/users.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { TenantScopeGuard } from './common/guards/tenant-scope.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -43,6 +44,7 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
     ReportsModule,
     DashboardModule,
     ImportsModule,
+    UsersModule,
   ],
   providers: [
     RequestContextMiddleware,

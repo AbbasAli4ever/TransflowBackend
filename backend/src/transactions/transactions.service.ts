@@ -7,6 +7,7 @@ import {
   ForbiddenException,
   ConflictException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getContext } from '../common/request-context';
 import { paginateResponse } from '../common/utils/paginate';
@@ -200,6 +201,8 @@ export class TransactionsService {
       customerId,
       sortBy = 'transactionDate',
       sortOrder = 'desc',
+      partySearch,
+      productId,
     } = query;
     const skip = (page - 1) * limit;
 
@@ -212,6 +215,15 @@ export class TransactionsService {
       where.transactionDate = {};
       if (dateFrom) where.transactionDate.gte = new Date(dateFrom);
       if (dateTo) where.transactionDate.lte = new Date(dateTo);
+    }
+    if (partySearch) {
+      where.OR = [
+        { supplier: { name: { contains: partySearch, mode: 'insensitive' } } },
+        { customer: { name: { contains: partySearch, mode: 'insensitive' } } },
+      ];
+    }
+    if (productId) {
+      where.transactionLines = { some: { variant: { productId } } };
     }
 
     const [transactions, total] = await Promise.all([
@@ -245,10 +257,63 @@ export class TransactionsService {
         paymentEntries: true,
         supplier: true,
         customer: true,
+        createdByUser: { select: { fullName: true } },
       },
     });
     if (!transaction) throw new NotFoundException('Transaction not found');
     return transaction;
+  }
+
+  async getReturnableLines(id: string) {
+    const tenantId = getContext()?.tenantId;
+    if (!tenantId) throw new UnauthorizedException();
+
+    const txn = await this.prisma.transaction.findFirst({ where: { id, tenantId } });
+    if (!txn) throw new NotFoundException('Transaction not found');
+
+    if (txn.status !== 'POSTED' || !['PURCHASE', 'SALE'].includes(txn.type)) {
+      throw new BadRequestException('Returnable lines are only available for POSTED PURCHASE or SALE transactions');
+    }
+
+    const lines = await this.prisma.transactionLine.findMany({
+      where: { transactionId: id },
+      include: { variant: { include: { product: true } } },
+    });
+
+    if (lines.length === 0) return { transactionId: id, lines: [] };
+
+    const idsFragment = Prisma.join(lines.map((l) => Prisma.sql`${l.id}::uuid`));
+    const returnedRows = await this.prisma.$queryRaw<
+      Array<{ line_id: string; already_returned: bigint }>
+    >`
+      SELECT
+        tl.source_transaction_line_id::text AS line_id,
+        COALESCE(SUM(tl.quantity), 0)::bigint AS already_returned
+      FROM transaction_lines tl
+      JOIN transactions t ON t.id = tl.transaction_id
+      WHERE tl.tenant_id = ${tenantId}::uuid
+        AND tl.source_transaction_line_id IN (${idsFragment})
+        AND t.status = 'POSTED'
+        AND t.type IN ('SUPPLIER_RETURN', 'CUSTOMER_RETURN')
+      GROUP BY tl.source_transaction_line_id
+    `;
+
+    const returnedMap = new Map(returnedRows.map((r) => [r.line_id, Number(r.already_returned)]));
+
+    return {
+      transactionId: id,
+      lines: lines.map((l) => {
+        const alreadyReturned = returnedMap.get(l.id) ?? 0;
+        return {
+          lineId: l.id,
+          productName: l.variant.product.name,
+          variantSize: l.variant.size,
+          originalQty: l.quantity,
+          alreadyReturned,
+          returnableQty: l.quantity - alreadyReturned,
+        };
+      }),
+    };
   }
 
   async createSupplierPaymentDraft(dto: CreateSupplierPaymentDraftDto) {
@@ -844,5 +909,354 @@ export class TransactionsService {
       });
     }
     return processed;
+  }
+
+  // ─── PATCH: edit draft ───────────────────────────────────────────────────────
+
+  async update(id: string, dto: any) {
+    const tenantId = getContext()?.tenantId;
+    if (!tenantId) throw new UnauthorizedException();
+
+    const txn = await this.prisma.transaction.findFirst({
+      where: { id, tenantId },
+      include: { transactionLines: true },
+    });
+    if (!txn) throw new NotFoundException('Transaction not found');
+    if (txn.status !== 'DRAFT') throw new BadRequestException('Only DRAFT transactions can be edited');
+
+    const hasFields = Object.keys(dto).some((k) => (dto as any)[k] !== undefined);
+    if (!hasFields) throw new BadRequestException('At least one field must be provided');
+
+    if (dto.transactionDate) this.assertDateNotFuture(dto.transactionDate);
+
+    switch (txn.type) {
+      case 'PURCHASE':         return this.updatePurchaseDraft(txn, dto, tenantId);
+      case 'SALE':             return this.updateSaleDraft(txn, dto, tenantId);
+      case 'SUPPLIER_PAYMENT': return this.updateSupplierPaymentDraft(txn, dto, tenantId);
+      case 'CUSTOMER_PAYMENT': return this.updateCustomerPaymentDraft(txn, dto, tenantId);
+      case 'INTERNAL_TRANSFER':return this.updateInternalTransferDraft(txn, dto, tenantId);
+      case 'SUPPLIER_RETURN':  return this.updateReturnDraft(txn, dto, tenantId, 'SUPPLIER_RETURN');
+      case 'CUSTOMER_RETURN':  return this.updateReturnDraft(txn, dto, tenantId, 'CUSTOMER_RETURN');
+      case 'ADJUSTMENT':       return this.updateAdjustmentDraft(txn, dto, tenantId);
+      default:                 throw new BadRequestException(`Edit not supported for transaction type ${txn.type}`);
+    }
+  }
+
+  private async updatePurchaseDraft(txn: any, dto: any, tenantId: string) {
+    if (dto.supplierId) {
+      const supplier = await this.prisma.supplier.findFirst({ where: { id: dto.supplierId, tenantId } });
+      if (!supplier) throw new NotFoundException('Supplier not found');
+      if (supplier.status !== 'ACTIVE') throw new UnprocessableEntityException('Supplier is not active');
+    }
+
+    const processedLines = dto.lines
+      ? await this.validateAndProcessPurchaseLines(dto.lines, tenantId)
+      : null;
+
+    return this.prisma.$transaction(async (tx) => {
+      const headerUpdate: any = {};
+      if (dto.transactionDate) headerUpdate.transactionDate = new Date(dto.transactionDate);
+      if (dto.notes !== undefined) headerUpdate.notes = dto.notes;
+      if (dto.supplierId) headerUpdate.supplierId = dto.supplierId;
+      if (dto.deliveryFee !== undefined) headerUpdate.deliveryFee = dto.deliveryFee;
+
+      if (processedLines) {
+        const subtotal = processedLines.reduce((s, l) => s + l.lineTotal, 0);
+        const discountTotal = processedLines.reduce((s, l) => s + l.discountAmount, 0);
+        const deliveryFee = dto.deliveryFee ?? txn.deliveryFee ?? 0;
+        headerUpdate.subtotal = subtotal;
+        headerUpdate.discountTotal = discountTotal;
+        headerUpdate.totalAmount = subtotal + deliveryFee;
+
+        await tx.transactionLine.deleteMany({ where: { transactionId: txn.id } });
+        await tx.transactionLine.createMany({
+          data: processedLines.map((l) => ({
+            tenantId,
+            transactionId: txn.id,
+            variantId: l.variantId,
+            quantity: l.quantity,
+            unitCost: l.unitCost,
+            discountAmount: l.discountAmount,
+            lineTotal: l.lineTotal,
+            costTotal: l.lineTotal,
+          })),
+        });
+      } else if (dto.deliveryFee !== undefined) {
+        // recalc totalAmount with new deliveryFee but existing lines
+        headerUpdate.totalAmount = txn.subtotal + dto.deliveryFee;
+      }
+
+      await tx.transaction.update({ where: { id: txn.id }, data: headerUpdate });
+      return tx.transaction.findFirst({
+        where: { id: txn.id },
+        include: { transactionLines: { include: { variant: true } }, supplier: { select: { id: true, name: true } } },
+      });
+    });
+  }
+
+  private async updateSaleDraft(txn: any, dto: any, tenantId: string) {
+    if (dto.customerId) {
+      const customer = await this.prisma.customer.findFirst({ where: { id: dto.customerId, tenantId } });
+      if (!customer) throw new NotFoundException('Customer not found');
+      if (customer.status !== 'ACTIVE') throw new UnprocessableEntityException('Customer is not active');
+    }
+
+    const processedLines = dto.lines
+      ? await this.validateAndProcessSaleLines(dto.lines, tenantId)
+      : null;
+
+    return this.prisma.$transaction(async (tx) => {
+      const headerUpdate: any = {};
+      if (dto.transactionDate) headerUpdate.transactionDate = new Date(dto.transactionDate);
+      if (dto.notes !== undefined) headerUpdate.notes = dto.notes;
+      if (dto.customerId) headerUpdate.customerId = dto.customerId;
+      if (dto.deliveryFee !== undefined) headerUpdate.deliveryFee = dto.deliveryFee;
+      if (dto.deliveryType !== undefined) headerUpdate.deliveryType = dto.deliveryType;
+      if (dto.deliveryAddress !== undefined) headerUpdate.deliveryAddress = dto.deliveryAddress;
+
+      if (processedLines) {
+        const subtotal = processedLines.reduce((s, l) => s + l.lineTotal, 0);
+        const discountTotal = processedLines.reduce((s, l) => s + l.discountAmount, 0);
+        const deliveryFee = dto.deliveryFee ?? txn.deliveryFee ?? 0;
+        headerUpdate.subtotal = subtotal;
+        headerUpdate.discountTotal = discountTotal;
+        headerUpdate.totalAmount = subtotal + deliveryFee;
+
+        await tx.transactionLine.deleteMany({ where: { transactionId: txn.id } });
+        await tx.transactionLine.createMany({
+          data: processedLines.map((l) => ({
+            tenantId,
+            transactionId: txn.id,
+            variantId: l.variantId,
+            quantity: l.quantity,
+            unitPrice: l.unitPrice,
+            discountAmount: l.discountAmount,
+            lineTotal: l.lineTotal,
+            costTotal: l.lineTotal,
+          })),
+        });
+      } else if (dto.deliveryFee !== undefined) {
+        headerUpdate.totalAmount = txn.subtotal + dto.deliveryFee;
+      }
+
+      await tx.transaction.update({ where: { id: txn.id }, data: headerUpdate });
+      return tx.transaction.findFirst({
+        where: { id: txn.id },
+        include: { transactionLines: { include: { variant: true } }, customer: { select: { id: true, name: true } } },
+      });
+    });
+  }
+
+  private async updateSupplierPaymentDraft(txn: any, dto: any, tenantId: string) {
+    if (dto.supplierId) {
+      const supplier = await this.prisma.supplier.findFirst({ where: { id: dto.supplierId, tenantId } });
+      if (!supplier) throw new NotFoundException('Supplier not found');
+      if (supplier.status !== 'ACTIVE') throw new UnprocessableEntityException('Supplier is not active');
+    }
+    if (dto.fromPaymentAccountId) {
+      const acct = await this.prisma.paymentAccount.findFirst({ where: { id: dto.fromPaymentAccountId, tenantId } });
+      if (!acct) throw new NotFoundException('Payment account not found');
+      if (acct.status !== 'ACTIVE') throw new UnprocessableEntityException('Payment account is not active');
+    }
+
+    const amount = dto.amount ?? txn.totalAmount;
+    const update: any = { totalAmount: amount, subtotal: amount };
+    if (dto.transactionDate) update.transactionDate = new Date(dto.transactionDate);
+    if (dto.notes !== undefined) update.notes = dto.notes;
+    if (dto.supplierId) update.supplierId = dto.supplierId;
+    if (dto.fromPaymentAccountId) update.fromPaymentAccountId = dto.fromPaymentAccountId;
+    if (dto.amount !== undefined) { update.totalAmount = dto.amount; update.subtotal = dto.amount; }
+
+    return this.prisma.transaction.update({
+      where: { id: txn.id },
+      data: update,
+    });
+  }
+
+  private async updateCustomerPaymentDraft(txn: any, dto: any, tenantId: string) {
+    if (dto.customerId) {
+      const customer = await this.prisma.customer.findFirst({ where: { id: dto.customerId, tenantId } });
+      if (!customer) throw new NotFoundException('Customer not found');
+      if (customer.status !== 'ACTIVE') throw new UnprocessableEntityException('Customer is not active');
+    }
+    if (dto.fromPaymentAccountId) {
+      const acct = await this.prisma.paymentAccount.findFirst({ where: { id: dto.fromPaymentAccountId, tenantId } });
+      if (!acct) throw new NotFoundException('Payment account not found');
+      if (acct.status !== 'ACTIVE') throw new UnprocessableEntityException('Payment account is not active');
+    }
+
+    const update: any = {};
+    if (dto.transactionDate) update.transactionDate = new Date(dto.transactionDate);
+    if (dto.notes !== undefined) update.notes = dto.notes;
+    if (dto.customerId) update.customerId = dto.customerId;
+    if (dto.fromPaymentAccountId) update.fromPaymentAccountId = dto.fromPaymentAccountId;
+    if (dto.amount !== undefined) { update.totalAmount = dto.amount; update.subtotal = dto.amount; }
+
+    return this.prisma.transaction.update({ where: { id: txn.id }, data: update });
+  }
+
+  private async updateInternalTransferDraft(txn: any, dto: any, tenantId: string) {
+    const fromId = dto.fromPaymentAccountId ?? txn.fromPaymentAccountId;
+    const toId = dto.toPaymentAccountId ?? txn.toPaymentAccountId;
+    if (dto.fromPaymentAccountId || dto.toPaymentAccountId) {
+      if (fromId === toId) throw new BadRequestException('From and To payment accounts must differ');
+      const accts = await Promise.all([
+        this.prisma.paymentAccount.findFirst({ where: { id: fromId, tenantId } }),
+        this.prisma.paymentAccount.findFirst({ where: { id: toId, tenantId } }),
+      ]);
+      if (!accts[0]) throw new NotFoundException('Source payment account not found');
+      if (accts[0].status !== 'ACTIVE') throw new UnprocessableEntityException('Source payment account is not active');
+      if (!accts[1]) throw new NotFoundException('Destination payment account not found');
+      if (accts[1].status !== 'ACTIVE') throw new UnprocessableEntityException('Destination payment account is not active');
+    }
+
+    const update: any = {};
+    if (dto.transactionDate) update.transactionDate = new Date(dto.transactionDate);
+    if (dto.notes !== undefined) update.notes = dto.notes;
+    if (dto.fromPaymentAccountId) update.fromPaymentAccountId = dto.fromPaymentAccountId;
+    if (dto.toPaymentAccountId) update.toPaymentAccountId = dto.toPaymentAccountId;
+    if (dto.amount !== undefined) { update.totalAmount = dto.amount; update.subtotal = dto.amount; }
+
+    return this.prisma.transaction.update({ where: { id: txn.id }, data: update });
+  }
+
+  private async updateReturnDraft(txn: any, dto: any, tenantId: string, type: 'SUPPLIER_RETURN' | 'CUSTOMER_RETURN') {
+    if (dto.lines && dto.lines.length > 0) {
+      for (const lineUpdate of dto.lines) {
+        if (!lineUpdate.lineId) throw new BadRequestException('lineId is required for RETURN line updates');
+        if (!lineUpdate.quantity) throw new BadRequestException('quantity is required for RETURN line updates');
+
+        const existingLine = txn.transactionLines.find((l: any) => l.id === lineUpdate.lineId);
+        if (!existingLine) throw new NotFoundException(`Line ${lineUpdate.lineId} not found on this transaction`);
+
+        // Re-validate returnable qty: how much is already POSTED back for the source line
+        const returnedResult = await this.prisma.$queryRaw<[{ returned: bigint }]>`
+          SELECT COALESCE(SUM(tl.quantity), 0) AS returned
+          FROM transaction_lines tl
+          JOIN transactions t ON t.id = tl.transaction_id
+          WHERE tl.source_transaction_line_id = ${existingLine.sourceTransactionLineId}::uuid
+            AND tl.tenant_id = ${tenantId}::uuid
+            AND t.status = 'POSTED'
+            AND t.type IN ('SUPPLIER_RETURN', 'CUSTOMER_RETURN')
+        `;
+        const sourceLine = await this.prisma.transactionLine.findFirst({
+          where: { id: existingLine.sourceTransactionLineId, tenantId },
+        });
+        if (!sourceLine) throw new UnprocessableEntityException('Source line not found');
+        const alreadyReturned = Number(returnedResult[0]?.returned ?? 0);
+        const returnableQty = sourceLine.quantity - alreadyReturned;
+        if (lineUpdate.quantity > returnableQty) {
+          throw new UnprocessableEntityException(
+            `Cannot return ${lineUpdate.quantity} units: only ${returnableQty} returnable`,
+          );
+        }
+
+        const effectiveUnitCost = sourceLine.quantity > 0
+          ? Math.floor((sourceLine.lineTotal ?? 0) / sourceLine.quantity)
+          : (sourceLine.unitCost ?? 0);
+
+        await this.prisma.transactionLine.update({
+          where: { id: lineUpdate.lineId },
+          data: {
+            quantity: lineUpdate.quantity,
+            lineTotal: lineUpdate.quantity * effectiveUnitCost,
+            costTotal: lineUpdate.quantity * effectiveUnitCost,
+          },
+        });
+      }
+
+      // Recompute transaction totals from updated lines
+      const updatedLines = await this.prisma.transactionLine.findMany({ where: { transactionId: txn.id } });
+      const subtotal = updatedLines.reduce((s, l) => s + l.lineTotal, 0);
+      await this.prisma.transaction.update({
+        where: { id: txn.id },
+        data: { subtotal, totalAmount: subtotal },
+      });
+    }
+
+    const headerUpdate: any = {};
+    if (dto.transactionDate) headerUpdate.transactionDate = new Date(dto.transactionDate);
+    if (dto.notes !== undefined) headerUpdate.notes = dto.notes;
+    if (Object.keys(headerUpdate).length > 0) {
+      await this.prisma.transaction.update({ where: { id: txn.id }, data: headerUpdate });
+    }
+
+    return this.prisma.transaction.findFirst({
+      where: { id: txn.id },
+      include: { transactionLines: { include: { variant: true } } },
+    });
+  }
+
+  private async updateAdjustmentDraft(txn: any, dto: any, tenantId: string) {
+    if (dto.lines) {
+      for (const line of dto.lines) {
+        const variant = await this.prisma.productVariant.findFirst({
+          where: { id: line.variantId, tenantId },
+          include: { product: true },
+        });
+        if (!variant) throw new NotFoundException(`Variant ${line.variantId} not found`);
+        if (variant.status !== 'ACTIVE') throw new UnprocessableEntityException(`Variant ${variant.size} is not active`);
+        if (variant.product.status !== 'ACTIVE') throw new UnprocessableEntityException(`Product ${variant.product.name} is not active`);
+      }
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const headerUpdate: any = {};
+      if (dto.transactionDate) headerUpdate.transactionDate = new Date(dto.transactionDate);
+      if (dto.notes !== undefined) headerUpdate.notes = dto.notes;
+
+      if (dto.lines) {
+        await tx.transactionLine.deleteMany({ where: { transactionId: txn.id } });
+        await tx.transactionLine.createMany({
+          data: dto.lines.map((l: any) => ({
+            tenantId,
+            transactionId: txn.id,
+            variantId: l.variantId,
+            quantity: l.quantity,
+            lineTotal: 0,
+            costTotal: 0,
+            description: JSON.stringify({ direction: l.direction, reason: l.reason ?? null }),
+          })),
+        });
+      }
+
+      if (Object.keys(headerUpdate).length > 0) {
+        await tx.transaction.update({ where: { id: txn.id }, data: headerUpdate });
+      }
+
+      return tx.transaction.findFirst({
+        where: { id: txn.id },
+        include: { transactionLines: { include: { variant: true } } },
+      });
+    });
+  }
+
+  async delete(id: string) {
+    const tenantId = getContext()?.tenantId;
+    if (!tenantId) throw new UnauthorizedException();
+
+    const txn = await this.prisma.transaction.findFirst({
+      where: { id, tenantId },
+    });
+    if (!txn) throw new NotFoundException('Transaction not found');
+
+    if (txn.status !== 'DRAFT') {
+      throw new BadRequestException('Only DRAFT transactions can be deleted');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.transactionLine.deleteMany({ where: { transactionId: id } });
+      await tx.inventoryMovement.deleteMany({ where: { transactionId: id } });
+      await tx.ledgerEntry.deleteMany({ where: { transactionId: id } });
+      await tx.paymentEntry.deleteMany({ where: { transactionId: id } });
+      await tx.allocation.deleteMany({
+        where: {
+          OR: [{ paymentTransactionId: id }, { appliesToTransactionId: id }],
+        },
+      });
+      await tx.transaction.delete({ where: { id } });
+    });
+
+    return { message: 'Transaction deleted' };
   }
 }

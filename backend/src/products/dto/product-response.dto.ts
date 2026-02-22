@@ -16,6 +16,9 @@ export class ProductVariantResponseDto {
   @ApiProperty({ example: 12000, description: 'Average cost in PKR (integer)' })
   avgCost!: number;
 
+  @ApiPropertyOptional({ example: 15, description: 'Current stock units — present on list and stock responses' })
+  currentStock?: number;
+
   @ApiProperty({ example: 'ACTIVE' })
   status!: string;
 
@@ -56,6 +59,9 @@ export class ProductResponseDto {
 
   @ApiPropertyOptional({ type: String, example: 'd2f2c7b5-0c2a-4aa2-9c60-6b3f94b7e8d4', format: 'uuid', nullable: true })
   createdBy?: string | null;
+
+  @ApiPropertyOptional({ example: 45, description: 'Total stock across all variants — present on list responses' })
+  totalStock?: number;
 
   @ApiProperty({ type: [ProductVariantResponseDto] })
   variants!: ProductVariantResponseDto[];
