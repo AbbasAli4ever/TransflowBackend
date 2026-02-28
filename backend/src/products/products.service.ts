@@ -46,7 +46,15 @@ export class ProductsService {
     const tenantId = getContext()?.tenantId;
     if (!tenantId) throw new UnauthorizedException();
 
-    const { page, limit, search, status = 'ACTIVE', category } = query;
+    const {
+      page,
+      limit,
+      search,
+      status = 'ACTIVE',
+      category,
+      sortBy = 'name',
+      sortOrder = 'asc',
+    } = query;
     const skip = (page - 1) * limit;
 
     const where: any = { tenantId };
@@ -72,7 +80,7 @@ export class ProductsService {
         where,
         skip,
         take: limit,
-        orderBy: { name: 'asc' },
+        orderBy: { [sortBy]: sortOrder },
         include: { variants: { orderBy: { size: 'asc' } } },
       }),
       this.prisma.product.count({ where }),

@@ -715,6 +715,7 @@ Same as Screen 20, for customers.
 | Search | `?search=text` | Searches name, SKU, category |
 | Status filter | `?status=ACTIVE` | |
 | Category filter | `?category=text` | |
+| Sort | `?sortBy=name&sortOrder=asc` (or `createdAt`) | |
 | Pagination | `?page=1&limit=20` | |
 
 ### Table Columns

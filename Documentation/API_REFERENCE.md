@@ -708,6 +708,8 @@ Endpoints for managing product master data.
       search?: string;   // Optional, string (case-insensitive search in `name`, `sku`, `category`)
       status?: 'ACTIVE' | 'INACTIVE' | 'ALL'; // Optional, default 'ACTIVE'
       category?: string; // Optional, string (filter by category, case-insensitive)
+      sortBy?: 'name' | 'createdAt'; // Optional, default 'name'
+      sortOrder?: 'asc' | 'desc'; // Optional, default 'asc'
     }
     ```
 *   **Success Response:** `200 OK` (Paginated response)

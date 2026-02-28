@@ -54,6 +54,8 @@ export class ProductsController {
   @ApiQuery({ name: 'search', required: false, type: String })
   @ApiQuery({ name: 'status', required: false, enum: ['ACTIVE', 'INACTIVE', 'ALL'] })
   @ApiQuery({ name: 'category', required: false, type: String })
+  @ApiQuery({ name: 'sortBy', required: false, enum: ['name', 'createdAt'] })
+  @ApiQuery({ name: 'sortOrder', required: false, enum: ['asc', 'desc'] })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   findAll(@Query() query: ListProductsQueryDto) {
     return this.productsService.findAll(query);
