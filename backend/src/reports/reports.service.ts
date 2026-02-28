@@ -522,7 +522,14 @@ export class ReportsService {
             AND le.transaction_date >= ${dateFrom}::date
             AND le.transaction_date <= ${dateTo}::date
             AND t.status = 'POSTED'
-          ORDER BY t.transaction_date ASC, t.created_at ASC
+          ORDER BY
+            t.transaction_date ASC,
+            t.created_at ASC,
+            CASE
+              WHEN le.entry_type = 'AP_INCREASE' THEN 0
+              WHEN le.entry_type = 'AP_DECREASE' THEN 1
+              ELSE 2
+            END ASC
         `,
       ]),
       { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
@@ -583,7 +590,14 @@ export class ReportsService {
             AND le.transaction_date >= ${dateFrom}::date
             AND le.transaction_date <= ${dateTo}::date
             AND t.status = 'POSTED'
-          ORDER BY t.transaction_date ASC, t.created_at ASC
+          ORDER BY
+            t.transaction_date ASC,
+            t.created_at ASC,
+            CASE
+              WHEN le.entry_type = 'AR_INCREASE' THEN 0
+              WHEN le.entry_type = 'AR_DECREASE' THEN 1
+              ELSE 2
+            END ASC
         `,
       ]),
       { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },

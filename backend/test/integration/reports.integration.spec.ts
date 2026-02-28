@@ -671,6 +671,34 @@ describe('Reports (Integration)', () => {
       expect(res.body.closingBalance).toBe(6000);
     });
 
+    it('orders purchase debit before same-document paidNow credit', async () => {
+      const supplier = await createTestSupplier(prisma, tenantId, userId);
+      const product = await createTestProduct(prisma, tenantId, userId);
+      const account = await createTestPaymentAccount(prisma, tenantId, userId);
+
+      await createAndPostPurchase(app, token, {
+        supplierId: supplier.id,
+        lines: [{ variantId: product.variants[0].id, quantity: 17, unitCost: 1000 }],
+        transactionDate: '2026-02-28',
+        paidNow: 10000,
+        paymentAccountId: account.id,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/reports/suppliers/${supplier.id}/statement?dateFrom=2026-02-01&dateTo=2026-02-28`)
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(res.body.entries).toHaveLength(2);
+      expect(res.body.entries[0].debit).toBe(17000);
+      expect(res.body.entries[0].credit).toBe(0);
+      expect(res.body.entries[0].runningBalance).toBe(17000);
+      expect(res.body.entries[1].debit).toBe(0);
+      expect(res.body.entries[1].credit).toBe(10000);
+      expect(res.body.entries[1].runningBalance).toBe(7000);
+      expect(res.body.closingBalance).toBe(7000);
+    });
+
     it('empty date range returns openingBalance as closingBalance', async () => {
       const supplier = await createTestSupplier(prisma, tenantId, userId);
       const product = await createTestProduct(prisma, tenantId, userId);
