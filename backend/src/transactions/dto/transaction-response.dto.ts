@@ -33,6 +33,9 @@ export class TransactionLineResponseDto {
 
   @ApiProperty({ example: 60000, description: 'Cost total in PKR (integer)' })
   costTotal!: number;
+
+  @ApiPropertyOptional({ type: Object, nullable: true, description: 'Full variant with nested product — present on detail (findOne) response only', example: { id: 'uuid', size: 'M', product: { id: 'uuid', name: 'Cotton T-Shirt', sku: 'CT-001' } } })
+  variant?: object | null;
 }
 
 export class TransactionResponseDto {
@@ -78,6 +81,9 @@ export class TransactionResponseDto {
   @ApiPropertyOptional({ type: String, example: 'Urgent', nullable: true })
   notes?: string | null;
 
+  @ApiPropertyOptional({ type: String, example: 'PUR-2026-0012', nullable: true, description: 'Document number — null for drafts, populated at posting time' })
+  documentNumber?: string | null;
+
   @ApiProperty({ example: '2026-02-11T10:00:00.000Z', format: 'date-time' })
   createdAt!: string;
 
@@ -87,11 +93,23 @@ export class TransactionResponseDto {
   @ApiProperty({ type: [TransactionLineResponseDto] })
   transactionLines!: TransactionLineResponseDto[];
 
-  @ApiPropertyOptional({ type: Object, nullable: true, description: 'Supplier name — present on list responses' })
+  @ApiPropertyOptional({ type: Object, nullable: true, description: 'Supplier (id + name) — present on both list and detail responses' })
   supplier?: { id: string; name: string } | null;
 
-  @ApiPropertyOptional({ type: Object, nullable: true, description: 'Customer name — present on list responses' })
+  @ApiPropertyOptional({ type: Object, nullable: true, description: 'Customer (id + name) — present on both list and detail responses' })
   customer?: { id: string; name: string } | null;
+
+  @ApiPropertyOptional({ type: Object, nullable: true, description: 'User who created this transaction — present on detail (findOne) response only', example: { fullName: 'John Doe' } })
+  createdByUser?: { fullName: string } | null;
+
+  @ApiPropertyOptional({ type: [Object], description: 'Inventory movements created at posting time — present on detail response only' })
+  inventoryMovements?: object[];
+
+  @ApiPropertyOptional({ type: [Object], description: 'Ledger entries (AR/AP) created at posting time — present on detail response only' })
+  ledgerEntries?: object[];
+
+  @ApiPropertyOptional({ type: [Object], description: 'Payment entries created at posting time — present on detail response only' })
+  paymentEntries?: object[];
 }
 
 export class TransactionListMetaDto {

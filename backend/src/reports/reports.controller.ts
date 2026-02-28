@@ -19,13 +19,16 @@ import { Roles } from '../common/decorators/roles.decorator';
 import {
   CustomerBalanceReportResponseDto,
   CustomerStatementReportResponseDto,
+  InventoryValuationReportResponseDto,
   PaymentAccountBalanceReportResponseDto,
   PaymentAccountStatementReportResponseDto,
   PendingPayablesReportResponseDto,
   PendingReceivablesReportResponseDto,
   ProductStockReportResponseDto,
+  ProfitLossReportResponseDto,
   SupplierBalanceReportResponseDto,
   SupplierStatementReportResponseDto,
+  TrialBalanceReportResponseDto,
 } from './dto/report-response.dto';
 
 @ApiTags('Reports')
@@ -162,5 +165,35 @@ export class ReportsController {
     @Query() query: StatementQueryDto,
   ) {
     return this.reportsService.getPaymentAccountStatement(id, query);
+  }
+
+  // ─── P&L + Inventory Valuation ───────────────────────────────────────────────
+
+  @Get('profit-loss')
+  @ApiOperation({ summary: 'Profit & Loss report for a date range' })
+  @ApiQuery({ name: 'dateFrom', required: true, type: String, example: '2026-01-01' })
+  @ApiQuery({ name: 'dateTo', required: true, type: String, example: '2026-01-31' })
+  @ApiOkResponse({ description: 'Profit & Loss summary with revenue, COGS, and gross profit', type: ProfitLossReportResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  getProfitLoss(@Query() query: StatementQueryDto) {
+    return this.reportsService.getProfitLoss(query);
+  }
+
+  @Get('inventory-valuation')
+  @ApiOperation({ summary: 'Inventory valuation report (point-in-time, all active products)' })
+  @ApiQuery({ name: 'asOfDate', required: false, type: String, example: '2026-02-20' })
+  @ApiOkResponse({ description: 'Inventory valuation grouped by product and variant', type: InventoryValuationReportResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  getInventoryValuation(@Query() query: BalanceQueryDto) {
+    return this.reportsService.getInventoryValuation(query);
+  }
+
+  @Get('trial-balance')
+  @ApiOperation({ summary: 'Trial balance report (point-in-time)' })
+  @ApiQuery({ name: 'asOfDate', required: false, type: String, example: '2026-02-20' })
+  @ApiOkResponse({ description: 'Trial balance with AR, AP, cash accounts, and inventory', type: TrialBalanceReportResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  getTrialBalance(@Query() query: BalanceQueryDto) {
+    return this.reportsService.getTrialBalance(query);
   }
 }

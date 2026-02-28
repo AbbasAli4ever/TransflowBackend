@@ -113,6 +113,63 @@ Authentication and user management endpoints.
 
 ---
 
+**3. `POST /api/v1/auth/refresh`**
+
+*   **Purpose:** Exchanges a valid refresh token for a new access token.
+*   **Auth:** Public
+*   **Request Body:** `application/json`
+    ```typescript
+    { refreshToken: string }
+    ```
+*   **Success Response:** `200 OK`
+    ```json
+    { "accessToken": "eyJhbGc..." }
+    ```
+*   **Error Responses:**
+    *   `401 Unauthorized`: Token invalid, expired, or revoked.
+
+---
+
+**4. `POST /api/v1/auth/logout`**
+
+*   **Purpose:** Revokes a refresh token so it can no longer be used.
+*   **Auth:** Public
+*   **Request Body:** `application/json`
+    ```typescript
+    { refreshToken: string }
+    ```
+*   **Success Response:** `200 OK` — `{ "message": "Logged out" }`
+
+---
+
+**5. `PATCH /api/v1/auth/tenant`**
+
+*   **Purpose:** Updates the authenticated tenant's business profile fields.
+*   **Auth:** JWT Bearer — **OWNER role required**
+*   **Request Body:** `application/json` — at least one field required
+    ```typescript
+    interface UpdateTenantDto {
+      name?: string;         // 1-100 chars
+      timezone?: string;     // IANA identifier, e.g. "Asia/Karachi"
+      baseCurrency?: string; // ISO 4217 3-letter code, e.g. "PKR"
+    }
+    ```
+*   **Success Response:** `200 OK`
+    ```json
+    {
+      "id": "uuid",
+      "name": "Acme Trading Co.",
+      "baseCurrency": "PKR",
+      "timezone": "Asia/Karachi"
+    }
+    ```
+*   **Error Responses:**
+    *   `400 Bad Request`: No fields provided, or validation failed.
+    *   `401 Unauthorized`: Missing or invalid JWT.
+    *   `403 Forbidden`: User role is not OWNER.
+
+---
+
 ### Health
 
 Endpoints for monitoring application health and version information.
@@ -651,6 +708,8 @@ Endpoints for managing product master data.
       search?: string;   // Optional, string (case-insensitive search in `name`, `sku`, `category`)
       status?: 'ACTIVE' | 'INACTIVE' | 'ALL'; // Optional, default 'ACTIVE'
       category?: string; // Optional, string (filter by category, case-insensitive)
+      sortBy?: 'name' | 'createdAt'; // Optional, default 'name'
+      sortOrder?: 'asc' | 'desc'; // Optional, default 'asc'
     }
     ```
 *   **Success Response:** `200 OK` (Paginated response)
@@ -811,6 +870,128 @@ Endpoints for managing product master data.
     *   `400 Bad Request`: Validation failed.
     *   `401 Unauthorized`: Missing or invalid JWT.
     *   `404 Not Found`: Product not found, or product belongs to another tenant.
+
+---
+
+**6. `POST /api/v1/products/:id/variants`**
+
+*   **Purpose:** Adds a new size variant to an existing product.
+*   **Auth:** JWT Bearer — OWNER or ADMIN
+*   **Path Params:** `id: string` (product UUID)
+*   **Request Body:** `application/json`
+    ```typescript
+    interface CreateProductVariantDto {
+      size: string;   // Required, e.g. "M", "XL", "500g"
+      sku?: string;   // Optional, variant-level SKU
+    }
+    ```
+*   **Success Response:** `201 Created` — returns created variant object.
+*   **Error Responses:**
+    *   `404 Not Found`: Product not found.
+    *   `409 Conflict`: A variant with this size already exists for this product.
+
+---
+
+**7. `PATCH /api/v1/products/:id/variants/:variantId`**
+
+*   **Purpose:** Updates the `size` label and/or `sku` of an existing variant.
+*   **Auth:** JWT Bearer — OWNER or ADMIN
+*   **Path Params:** `id` (product UUID), `variantId` (variant UUID)
+*   **Request Body:** `application/json` — at least one field required
+    ```typescript
+    interface UpdateProductVariantDto {
+      size?: string;          // New size label (1-50 chars)
+      sku?: string | null;    // New variant SKU (null to clear)
+    }
+    ```
+*   **Success Response:** `200 OK` — returns updated variant object.
+*   **Error Responses:**
+    *   `400 Bad Request`: No fields provided.
+    *   `404 Not Found`: Product or variant not found.
+    *   `409 Conflict`: A variant with this size already exists for this product.
+
+---
+
+**8. `PATCH /api/v1/products/:id/variants/:variantId/status`**
+
+*   **Purpose:** Activates or deactivates a size variant.
+*   **Auth:** JWT Bearer — OWNER or ADMIN
+*   **Path Params:** `id` (product UUID), `variantId` (variant UUID)
+*   **Request Body:** `application/json`
+    ```typescript
+    { status: 'ACTIVE' | 'INACTIVE'; reason?: string }
+    ```
+*   **Success Response:** `200 OK` — returns updated variant.
+*   **Error Responses:**
+    *   `400 Bad Request`: Cannot deactivate variant with positive stock.
+    *   `404 Not Found`: Variant not found.
+
+---
+
+**9. `GET /api/v1/products/:id/stock`**
+
+*   **Purpose:** Returns current stock quantities and average cost per size variant for a product.
+*   **Auth:** JWT Bearer
+*   **Path Params:** `id: string` (product UUID)
+*   **Success Response:** `200 OK`
+    ```json
+    {
+      "productId": "uuid",
+      "totalStock": 80,
+      "variants": [
+        { "variantId": "uuid", "size": "M", "currentStock": 50, "avgCost": 800 },
+        { "variantId": "uuid", "size": "L", "currentStock": 30, "avgCost": 800 }
+      ]
+    }
+    ```
+
+---
+
+**10. `GET /api/v1/products/:id/movements`**
+
+*   **Purpose:** Returns a paginated, chronological list of all inventory movements for a product (all variants combined), with a running stock total.
+*   **Auth:** JWT Bearer
+*   **Path Params:** `id: string` (product UUID)
+*   **Query Parameters:**
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `page`    | No       | 1       | Page number |
+| `limit`   | No       | 20      | Items per page (max 100) |
+
+*   **Success Response:** `200 OK`
+    ```json
+    {
+      "data": [
+        {
+          "date": "2026-02-10",
+          "documentNumber": "PUR-0001",
+          "type": "PURCHASE",
+          "variantSize": "M",
+          "quantityIn": 20,
+          "quantityOut": 0,
+          "runningStock": 20
+        },
+        {
+          "date": "2026-02-15",
+          "documentNumber": "SAL-0003",
+          "type": "SALE",
+          "variantSize": "M",
+          "quantityIn": 0,
+          "quantityOut": 5,
+          "runningStock": 15
+        }
+      ],
+      "meta": { "page": 1, "limit": 20, "total": 45, "totalPages": 3 }
+    }
+    ```
+*   **Field notes:**
+    - `quantityIn` — non-zero for movement types: `PURCHASE_IN`, `CUSTOMER_RETURN_IN`, `ADJUSTMENT_IN`
+    - `quantityOut` — non-zero for movement types: `SALE_OUT`, `SUPPLIER_RETURN_OUT`, `ADJUSTMENT_OUT`
+    - `runningStock` — cumulative stock level after this movement (computed from stock before the page offset + movements on the page)
+*   **Error Responses:**
+    *   `404 Not Found`: Product not found.
+    *   `401 Unauthorized`: Missing or invalid JWT.
 
 ---
 
@@ -1016,3 +1197,538 @@ Endpoints for managing payment account master data.
     *   `401 Unauthorized`: Missing or invalid JWT.
     *   `404 Not Found`: Payment account not found, or account belongs to another tenant.
     *   `409 Conflict`: (Potentially, if account has non-zero balance and cannot be inactivated. This specific check is not implemented in Phase 3, as `_computed.currentBalance` is always 0.)
+
+---
+
+## Reports
+
+All report endpoints require `Authorization: Bearer <token>` and the user role must be `OWNER` or `ADMIN`.
+
+**Base path:** `/api/v1/reports`
+
+---
+
+### `GET /api/v1/reports/profit-loss`
+
+Returns a Profit & Loss summary for the specified date range. Revenue figures come from posted `SALE` and `CUSTOMER_RETURN` transactions. COGS is sourced from `inventory_movements` (actual unit cost at time of movement), not from transaction line `costTotal`.
+
+**Query Parameters:**
+
+| Parameter  | Required | Format     | Description                    |
+|------------|----------|------------|--------------------------------|
+| `dateFrom` | Yes      | YYYY-MM-DD | Start date (inclusive)         |
+| `dateTo`   | Yes      | YYYY-MM-DD | End date (inclusive, ≥ dateFrom) |
+
+**Response `200 OK`:**
+```json
+{
+  "dateFrom": "2026-01-01",
+  "dateTo": "2026-01-31",
+  "sales": 500000,
+  "salesReturns": 25000,
+  "netRevenue": 475000,
+  "costOfGoodsSold": 300000,
+  "grossProfit": 175000,
+  "grossProfitMargin": 36.84
+}
+```
+
+**Field notes:**
+- `sales` — SUM of `totalAmount` from POSTED SALE transactions in date range
+- `salesReturns` — SUM of `totalAmount` from POSTED CUSTOMER_RETURN transactions in date range
+- `netRevenue` = `sales` - `salesReturns`
+- `costOfGoodsSold` — net COGS from inventory_movements: SALE_OUT cost minus CUSTOMER_RETURN_IN cost
+- `grossProfit` = `netRevenue` - `costOfGoodsSold`
+- `grossProfitMargin` — percentage to 2 decimal places; 0 when `netRevenue` = 0
+
+**Error Responses:**
+- `400 Bad Request` — missing or invalid `dateFrom`/`dateTo`, or `dateTo` before `dateFrom`
+- `401 Unauthorized`
+
+---
+
+### `GET /api/v1/reports/inventory-valuation`
+
+Returns inventory valuation for all active products and their active variants as of a point-in-time date. Returns all active products in one response (no pagination).
+
+**Query Parameters:**
+
+| Parameter  | Required | Format     | Description                              |
+|------------|----------|------------|------------------------------------------|
+| `asOfDate` | No       | YYYY-MM-DD | Defaults to today in tenant's timezone   |
+
+**Response `200 OK`:**
+```json
+{
+  "asOfDate": "2026-02-20",
+  "grandTotalValue": 1500000,
+  "products": [
+    {
+      "productId": "uuid",
+      "productName": "Cotton T-Shirt",
+      "sku": "CT-001",
+      "category": "Apparel",
+      "variants": [
+        {
+          "variantId": "uuid",
+          "size": "M",
+          "sku": "CT-001-M",
+          "qtyOnHand": 50,
+          "avgCost": 800,
+          "totalValue": 40000
+        },
+        {
+          "variantId": "uuid",
+          "size": "L",
+          "sku": "CT-001-L",
+          "qtyOnHand": 30,
+          "avgCost": 800,
+          "totalValue": 24000
+        }
+      ],
+      "productTotalQty": 80,
+      "productTotalValue": 64000
+    }
+  ]
+}
+```
+
+**Field notes:**
+- `qtyOnHand` — net stock from inventory_movements up to `asOfDate` (purchases + customer returns + adjustments in − sales − supplier returns − adjustments out)
+- `avgCost` — (net purchase cost) / (net purchase qty), rounded to nearest integer; 0 if no purchases
+- `totalValue` = `qtyOnHand` × `avgCost` per variant
+- `grandTotalValue` = sum of all `productTotalValue`
+
+**Error Responses:**
+- `400 Bad Request` — invalid `asOfDate` format
+- `401 Unauthorized`
+
+---
+
+### `GET /api/v1/reports/trial-balance`
+
+Returns a point-in-time trial balance assembled from AR/AP ledger entries, payment account balances, and net inventory value.
+
+**Auth:** JWT Bearer — OWNER or ADMIN
+
+**Query Parameters:**
+
+| Parameter  | Required | Format     | Description                            |
+|------------|----------|------------|----------------------------------------|
+| `asOfDate` | No       | YYYY-MM-DD | Defaults to today in tenant's timezone |
+
+**Response `200 OK`:**
+```json
+{
+  "asOfDate": "2026-02-20",
+  "accounts": [
+    { "name": "Accounts Receivable", "debit": 150000, "credit": 0 },
+    { "name": "Accounts Payable",    "debit": 0,      "credit": 200000 },
+    { "name": "Main Cash",           "debit": 85000,  "credit": 0 },
+    { "name": "HBL Business",        "debit": 0,      "credit": 30000 },
+    { "name": "Inventory",           "debit": 450000, "credit": 0 }
+  ],
+  "totalDebit": 685000,
+  "totalCredit": 230000
+}
+```
+
+**Field notes:**
+- **Accounts Receivable** — net of `AR_INCREASE − AR_DECREASE` from posted `ledger_entries` up to `asOfDate`
+- **Accounts Payable** — net of `AP_INCREASE − AP_DECREASE` from posted `ledger_entries` up to `asOfDate`; shown as credit when positive
+- **Payment accounts** — one entry per active payment account; balance = `openingBalance + totalIn − totalOut` from posted `payment_entries`. Positive balance → debit; negative → credit
+- **Inventory** — net value from `inventory_movements` up to `asOfDate` (purchase/adjustment/return-in cost minus sale/return-out/adjustment-out cost)
+- Accounts with a zero balance are omitted from the response
+- `totalDebit` / `totalCredit` are sums of all debit/credit entries respectively (not necessarily equal — this is not a double-entry system)
+
+**Error Responses:**
+- `401 Unauthorized`
+
+---
+
+## Transactions
+
+The transactions module handles all financial transaction types. Every transaction goes through a two-step flow: **Draft → Post**.
+
+**Auth:** All endpoints require JWT Bearer. All data is automatically scoped to the authenticated tenant.
+
+**Transaction types:** `PURCHASE`, `SALE`, `SUPPLIER_PAYMENT`, `CUSTOMER_PAYMENT`, `SUPPLIER_RETURN`, `CUSTOMER_RETURN`, `INTERNAL_TRANSFER`, `ADJUSTMENT`
+
+**Transaction statuses:** `DRAFT`, `POSTED`, `VOIDED`
+
+---
+
+### `POST /api/v1/transactions/purchases/draft`
+
+Creates a DRAFT purchase transaction.
+
+**Request Body:**
+```typescript
+{
+  supplierId: string;       // UUID, required, must be ACTIVE
+  transactionDate: string;  // YYYY-MM-DD, not in future
+  lines: Array<{
+    variantId: string;      // UUID, must be ACTIVE
+    quantity: number;       // ≥ 1
+    unitCost: number;       // ≥ 1 (PKR integer)
+    discountAmount?: number; // ≥ 0, default 0
+  }>;
+  deliveryFee?: number;     // ≥ 0, default 0
+  notes?: string;           // max 1000 chars
+  idempotencyKey?: string;  // max 64 chars — resends same response if duplicate
+}
+```
+
+**Success Response:** `201 Created` — full transaction object with `transactionLines[]`.
+
+---
+
+### `POST /api/v1/transactions/sales/draft`
+
+Creates a DRAFT sale transaction.
+
+**Request Body:**
+```typescript
+{
+  customerId: string;
+  transactionDate: string;
+  lines: Array<{
+    variantId: string;
+    quantity: number;
+    unitPrice: number;       // ≥ 1
+    discountAmount?: number;
+  }>;
+  deliveryFee?: number;
+  deliveryType?: string;     // e.g. "HOME_DELIVERY"
+  deliveryAddress?: string;  // max 500 chars
+  notes?: string;
+  idempotencyKey?: string;
+}
+```
+
+**Success Response:** `201 Created`
+
+---
+
+### `POST /api/v1/transactions/supplier-payments/draft`
+
+Creates a DRAFT supplier payment (no lines — payment is a header-only transaction).
+
+**Request Body:**
+```typescript
+{
+  supplierId: string;
+  amount: number;            // ≥ 1
+  paymentAccountId: string;  // UUID, must be ACTIVE
+  transactionDate: string;
+  notes?: string;
+  idempotencyKey?: string;
+}
+```
+
+---
+
+### `POST /api/v1/transactions/customer-payments/draft`
+
+Same as supplier payment, but for customers. `customerId` instead of `supplierId`.
+
+---
+
+### `POST /api/v1/transactions/supplier-returns/draft`
+
+Creates a DRAFT supplier return. Each line references a source purchase line.
+
+**Request Body:**
+```typescript
+{
+  supplierId: string;
+  transactionDate: string;
+  lines: Array<{
+    sourceTransactionLineId: string; // UUID — must be from a POSTED PURCHASE for this supplier
+    quantity: number;                // ≥ 1, ≤ returnableQty
+  }>;
+  notes?: string;
+  idempotencyKey?: string;
+}
+```
+
+**Validation:** `quantity` per line cannot exceed `returnableQty` (original qty minus already-returned in other posted returns).
+
+---
+
+### `POST /api/v1/transactions/customer-returns/draft`
+
+Same as supplier return, but source lines must be from POSTED SALEs for the given customer.
+
+---
+
+### `POST /api/v1/transactions/internal-transfers/draft`
+
+Creates a DRAFT internal transfer between two payment accounts.
+
+**Request Body:**
+```typescript
+{
+  fromPaymentAccountId: string; // must be ACTIVE, ≠ toPaymentAccountId
+  toPaymentAccountId: string;   // must be ACTIVE
+  amount: number;               // ≥ 1
+  transactionDate: string;
+  notes?: string;
+  idempotencyKey?: string;
+}
+```
+
+---
+
+### `POST /api/v1/transactions/adjustments/draft`
+
+Creates a DRAFT stock adjustment. Requires OWNER or ADMIN role.
+
+**Request Body:**
+```typescript
+{
+  transactionDate: string;
+  lines: Array<{
+    variantId: string;
+    quantity: number;          // ≥ 1
+    direction: 'IN' | 'OUT';
+    reason: string;            // max 500 chars
+  }>;
+  notes?: string;
+  idempotencyKey?: string;
+}
+```
+
+---
+
+### `POST /api/v1/transactions/:id/post`
+
+Posts (finalises) a DRAFT transaction, creating ledger entries, inventory movements, and payment entries. Idempotent via `idempotencyKey`.
+
+**Path Params:** `id: string` (transaction UUID)
+
+**Request Body:**
+```typescript
+{
+  idempotencyKey: string;
+  paidNow?: number;            // PURCHASE only — amount paid at posting time
+  receivedNow?: number;        // SALE only
+  paymentAccountId?: string;   // required if paidNow/receivedNow > 0
+  allocations?: Array<{        // PAYMENT types — manual allocation to open documents
+    transactionId: string;
+    amount: number;
+  }>;
+  returnHandling?: 'REFUND_NOW' | 'STORE_CREDIT'; // CUSTOMER_RETURN only
+}
+```
+
+**Success Response:** `200 OK` — posted transaction object with `documentNumber` populated.
+
+---
+
+### `GET /api/v1/transactions`
+
+Returns a paginated list of transactions for the authenticated tenant.
+
+**Query Parameters:**
+
+| Parameter     | Required | Description |
+|---------------|----------|-------------|
+| `page`        | No       | Default 1 |
+| `limit`       | No       | Default 20, max 100 |
+| `type`        | No       | Filter by transaction type enum |
+| `status`      | No       | `DRAFT` / `POSTED` / `VOIDED` |
+| `dateFrom`    | No       | YYYY-MM-DD |
+| `dateTo`      | No       | YYYY-MM-DD |
+| `supplierId`  | No       | UUID — filter by specific supplier |
+| `customerId`  | No       | UUID — filter by specific customer |
+| `partySearch` | No       | Text — case-insensitive search across supplier AND customer names |
+| `productId`   | No       | UUID — filter transactions containing this product in any line |
+| `sortBy`      | No       | `transactionDate` (default), `createdAt`, `totalAmount` |
+| `sortOrder`   | No       | `asc`, `desc` (default) |
+
+**Response:** Paginated list. Each item includes `supplier: { id, name }` and `customer: { id, name }` (nullable).
+
+---
+
+### `GET /api/v1/transactions/:id`
+
+Returns full transaction detail including lines, inventory movements, ledger entries, payment entries, supplier, and customer.
+
+---
+
+### `PATCH /api/v1/transactions/:id`
+
+Edits a DRAFT transaction. The type of the transaction determines which fields are editable.
+
+**Path Params:** `id: string` (transaction UUID, must be DRAFT status)
+
+**Request Body:** `PatchTransactionDto` — all fields optional, at least one required:
+```typescript
+{
+  transactionDate?: string;
+  notes?: string;
+  supplierId?: string;             // PURCHASE, SUPPLIER_PAYMENT
+  customerId?: string;             // SALE, CUSTOMER_PAYMENT
+  deliveryFee?: number;            // PURCHASE, SALE
+  deliveryType?: string;           // SALE only
+  deliveryAddress?: string;        // SALE only
+  amount?: number;                 // PAYMENT types, INTERNAL_TRANSFER
+  fromPaymentAccountId?: string;   // PAYMENT types, INTERNAL_TRANSFER
+  toPaymentAccountId?: string;     // INTERNAL_TRANSFER only
+  lines?: Array<{
+    // For PURCHASE, SALE, ADJUSTMENT — full line replacement (deleteMany + createMany)
+    variantId?: string;
+    quantity?: number;
+    unitCost?: number;             // PURCHASE
+    unitPrice?: number;            // SALE
+    discountAmount?: number;
+    direction?: 'IN' | 'OUT';     // ADJUSTMENT only
+    reason?: string;               // ADJUSTMENT only
+    // For RETURN types — per-line quantity update only
+    lineId?: string;               // Required for RETURN types — existing line to update
+  }>;
+}
+```
+
+**Behaviour by type:**
+- `PURCHASE` / `SALE`: full line replacement when `lines` provided; totals recomputed
+- `SUPPLIER_RETURN` / `CUSTOMER_RETURN`: `lines[].lineId` + `lines[].quantity` only; `sourceTransactionLineId` is immutable; returnable qty re-validated
+- `SUPPLIER_PAYMENT` / `CUSTOMER_PAYMENT`: header + amount only (no lines)
+- `INTERNAL_TRANSFER`: header + amount + both account IDs
+- `ADJUSTMENT`: full line replacement
+
+**Error Responses:**
+- `400 Bad Request`: Not a DRAFT, no fields provided, or attempting to add lines to a return.
+- `404 Not Found`: Transaction or line not found.
+- `422 Unprocessable Entity`: Variant/party inactive, or quantity exceeds returnable qty (for returns).
+
+---
+
+### `DELETE /api/v1/transactions/:id`
+
+Deletes a DRAFT transaction and all its child records (lines, movements, ledger entries, payment entries, allocations).
+
+**Path Params:** `id: string` (transaction UUID, must be DRAFT status)
+
+**Success Response:** `200 OK` — `{ "message": "Transaction deleted" }`
+
+**Error Responses:**
+- `400 Bad Request`: Transaction is not a DRAFT.
+- `404 Not Found`: Transaction not found.
+
+---
+
+### `GET /api/v1/transactions/:id/returnable-lines`
+
+Returns the returnable quantity per line for a POSTED PURCHASE or SALE. Used by the supplier/customer return creation screens to pre-fill "Already Returned" and "Returnable Qty" columns.
+
+**Path Params:** `id: string` (UUID of a POSTED PURCHASE or SALE transaction)
+
+**Success Response:** `200 OK`
+```json
+{
+  "transactionId": "uuid",
+  "lines": [
+    {
+      "lineId": "uuid",
+      "productName": "Cotton T-Shirt",
+      "variantSize": "M",
+      "originalQty": 10,
+      "alreadyReturned": 3,
+      "returnableQty": 7
+    }
+  ]
+}
+```
+
+**Error Responses:**
+- `400 Bad Request`: Transaction is not a POSTED PURCHASE or SALE.
+- `404 Not Found`: Transaction not found.
+
+---
+
+### `GET /api/v1/transactions/allocations`
+
+Returns payment allocations for a transaction. Filter by `purchaseId` or `saleId`.
+
+**Query Parameters:** `purchaseId?: string`, `saleId?: string`, `page?`, `limit?`
+
+---
+
+## Users
+
+User management within a tenant. All endpoints require JWT Bearer.
+
+---
+
+### `GET /api/v1/users`
+
+Returns a paginated list of users in the authenticated tenant. Available to OWNER and ADMIN.
+
+**Query Parameters:**
+
+| Parameter | Required | Default  | Description |
+|-----------|----------|----------|-------------|
+| `status`  | No       | `ACTIVE` | `ACTIVE`, `INACTIVE`, or `ALL` |
+| `page`    | No       | 1        | |
+| `limit`   | No       | 20       | |
+
+**Response `200 OK`:**
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "tenantId": "uuid",
+      "fullName": "Jane Smith",
+      "email": "jane@example.com",
+      "role": "ADMIN",
+      "status": "ACTIVE",
+      "createdAt": "2026-02-01T10:00:00.000Z"
+    }
+  ],
+  "meta": { "page": 1, "limit": 20, "total": 3, "totalPages": 1 }
+}
+```
+
+**Note:** `passwordHash` is never included in the response.
+
+---
+
+### `PATCH /api/v1/users/:id/role`
+
+Changes a user's role. **OWNER role required.** Cannot change your own role.
+
+**Path Params:** `id: string` (user UUID)
+
+**Request Body:**
+```typescript
+{ role: 'OWNER' | 'ADMIN'; reason?: string }
+```
+
+**Success Response:** `200 OK` — updated user object.
+
+**Error Responses:**
+- `403 Forbidden`: Caller is not OWNER, or attempting to change own role.
+- `404 Not Found`: User not found.
+
+---
+
+### `PATCH /api/v1/users/:id/status`
+
+Activates or deactivates a user. **OWNER role required.** Cannot deactivate yourself or the last active OWNER.
+
+**Path Params:** `id: string` (user UUID)
+
+**Request Body:**
+```typescript
+{ status: 'ACTIVE' | 'INACTIVE'; reason?: string }
+```
+
+**Success Response:** `200 OK` — updated user object.
+
+**Error Responses:**
+- `400 Bad Request`: Cannot deactivate the last active OWNER.
+- `403 Forbidden`: Attempting to change own status.
+- `404 Not Found`: User not found.

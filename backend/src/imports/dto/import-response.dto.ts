@@ -28,6 +28,12 @@ export class ImportUploadResponseDto {
   @ApiProperty({ type: [String], example: ['Company Name', 'Phone'] })
   detectedColumns!: string[];
 
+  @ApiProperty({
+    description: 'First up to 2 sample values per detected column header',
+    example: { 'Company Name': ['Acme Ltd', 'Xyz Corp'], Phone: ['03001234567'] },
+  })
+  sampleValues!: Record<string, string[]>;
+
   @ApiProperty({ type: [ImportRequiredFieldDto] })
   requiredFields!: ImportRequiredFieldDto[];
 
@@ -248,6 +254,9 @@ export class ImportBatchDetailResponseDto {
 
   @ApiProperty({ example: '2026-02-16T10:08:00.000Z', format: 'date-time' })
   updatedAt!: string;
+
+  @ApiPropertyOptional({ type: Object, nullable: true, description: 'User who created this import batch', example: { fullName: 'John Doe' } })
+  createdByUser?: { fullName: string } | null;
 
   @ApiProperty({ type: [ImportBatchRowDto] })
   rows!: ImportBatchRowDto[];

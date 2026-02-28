@@ -52,7 +52,7 @@ Transaction (Event) → Posting Engine → Truth Tables (Entries)
 | 7 | Queries + Hardening | ✅ Complete | Reports, Dashboard, & Imports complete; Hardening deferred |
 | 8 | [Product Variants](Documentation/progress/20260217-ProductVariants-ProgressReport.md) | ✅ Complete | Schema change for product variants and data migration |
 | 9 | [Product Variants UI](Documentation/progress/20260218-ProductVariantsUI-ProgressReport.md) | ✅ Complete | Updated 12 screens to support product variants |
-| 10 | [API Mapping & Gaps Remediation](Documentation/progress/20260219-APIMappingAndBackendGapsRemediation-ProgressReport.md) | ✅ Complete | Balance optimizations, statement notes, & list enrichment |
+| 10 | [API Mapping & Gaps Remediation](Documentation/progress/20260219-Phase10P1Remediations-ProgressReport.md) | ✅ Complete | Resolved all P0 and P1 gaps (User management, P&L, Trial Balance, & optimizations) |
 ### Phase Documentation Locations
 
 ```

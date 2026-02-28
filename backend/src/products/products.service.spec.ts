@@ -62,15 +62,50 @@ describe('ProductsService', () => {
   });
 
   describe('findAll', () => {
-    it('returns paginated list', async () => {
-      const product = { id: 'prod-1', name: 'Widget', tenantId: 'tenant-1' };
+    it('returns paginated list with currentStock and totalStock per product', async () => {
+      const product = {
+        id: 'prod-1',
+        name: 'Widget',
+        tenantId: 'tenant-1',
+        variants: [{ id: 'var-1', size: 'one-size', sku: null, avgCost: 1200, status: 'ACTIVE' }],
+      };
       prisma.product.findMany.mockResolvedValue([product]);
       prisma.product.count.mockResolvedValue(1);
+      prisma.$queryRaw.mockResolvedValueOnce([{ variant_id: 'var-1', stock: 10n }]);
 
       const result = await service.findAll({ page: 1, limit: 20 });
 
       expect(result.data).toHaveLength(1);
       expect(result.meta.total).toBe(1);
+      expect(result.data[0]).toHaveProperty('totalStock', 10);
+      expect((result.data[0] as any).variants[0]).toHaveProperty('currentStock', 10);
+    });
+
+    it('returns 0 stock for variants with no movements', async () => {
+      const product = {
+        id: 'prod-1',
+        name: 'Widget',
+        tenantId: 'tenant-1',
+        variants: [{ id: 'var-1', size: 'one-size', sku: null, avgCost: 0, status: 'ACTIVE' }],
+      };
+      prisma.product.findMany.mockResolvedValue([product]);
+      prisma.product.count.mockResolvedValue(1);
+      prisma.$queryRaw.mockResolvedValueOnce([]); // no rows = no movements
+
+      const result = await service.findAll({ page: 1, limit: 20 });
+
+      expect(result.data[0]).toHaveProperty('totalStock', 0);
+      expect((result.data[0] as any).variants[0]).toHaveProperty('currentStock', 0);
+    });
+
+    it('returns empty list without calling stock query', async () => {
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.product.count.mockResolvedValue(0);
+
+      const result = await service.findAll({ page: 1, limit: 20 });
+
+      expect(result.data).toHaveLength(0);
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
 
     it('filters by category', async () => {

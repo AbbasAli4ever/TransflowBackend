@@ -5,6 +5,7 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getContext } from '../common/request-context';
 import { paginateResponse } from '../common/utils/paginate';
@@ -67,7 +68,44 @@ export class PaymentAccountsService {
       this.prisma.paymentAccount.count({ where }),
     ]);
 
-    return paginateResponse(accounts, total, page, limit);
+    if (accounts.length === 0) return paginateResponse(accounts, total, page, limit);
+
+    const idsFragment = Prisma.join(accounts.map((a) => Prisma.sql`${a.id}::uuid`));
+    const balanceRows = await this.prisma.$queryRaw<
+      Array<{ account_id: string; total_in: bigint; total_out: bigint }>
+    >`
+      SELECT
+        pe.payment_account_id::text AS account_id,
+        COALESCE(SUM(CASE WHEN pe.direction = 'IN'  THEN pe.amount ELSE 0 END), 0)::bigint AS total_in,
+        COALESCE(SUM(CASE WHEN pe.direction = 'OUT' THEN pe.amount ELSE 0 END), 0)::bigint AS total_out
+      FROM payment_entries pe
+      JOIN transactions t ON t.id = pe.transaction_id AND t.status = 'POSTED'
+      WHERE pe.tenant_id = ${tenantId}::uuid
+        AND pe.payment_account_id IN (${idsFragment})
+      GROUP BY pe.payment_account_id
+    `;
+
+    const balanceMap = new Map(
+      balanceRows.map((r) => [
+        r.account_id,
+        { totalIn: safeMoney(r.total_in), totalOut: safeMoney(r.total_out) },
+      ]),
+    );
+
+    const data = accounts.map((a) => {
+      const bal = balanceMap.get(a.id) ?? { totalIn: 0, totalOut: 0 };
+      return {
+        ...a,
+        _computed: {
+          totalIn: bal.totalIn,
+          totalOut: bal.totalOut,
+          currentBalance: a.openingBalance + bal.totalIn - bal.totalOut,
+          lastTransactionDate: null,
+        },
+      };
+    });
+
+    return paginateResponse(data, total, page, limit);
   }
 
   async findOne(id: string) {

@@ -116,6 +116,14 @@ export class ImportsService {
       return created;
     });
 
+    const sampleValues: Record<string, string[]> = {};
+    for (const header of parsed.headers) {
+      sampleValues[header] = parsed.rows
+        .slice(0, 2)
+        .map((row) => row[header] ?? '')
+        .filter((v) => v !== '');
+    }
+
     return {
       id: batch.id,
       module: batch.module,
@@ -123,6 +131,7 @@ export class ImportsService {
       totalRows: batch.totalRows,
       status: batch.status,
       detectedColumns: parsed.headers,
+      sampleValues,
       requiredFields: REQUIRED_FIELDS[dto.module] ?? [],
       createdAt: batch.createdAt,
     };
@@ -586,6 +595,7 @@ export class ImportsService {
 
     const batch = await this.prisma.importBatch.findFirst({
       where: { id: batchId, tenantId },
+      include: { createdByUser: { select: { fullName: true } } },
     });
     if (!batch) throw new NotFoundException('Import batch not found');
 

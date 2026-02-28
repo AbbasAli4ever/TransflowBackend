@@ -128,6 +128,18 @@ describe('Products API (Integration)', () => {
       expect(response.body.data).toHaveLength(1);
     });
 
+    it('sorts by createdAt desc', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/products?sortBy=createdAt&sortOrder=desc')
+        .set(authHeader(token))
+        .expect(200);
+
+      expect(response.body.data).toHaveLength(2);
+      expect(new Date(response.body.data[0].createdAt).getTime()).toBeGreaterThanOrEqual(
+        new Date(response.body.data[1].createdAt).getTime(),
+      );
+    });
+
     it('isolates by tenant', async () => {
       const { tenant: t2, user: u2 } = await createTenantWithUser(prisma);
       await createTestProduct(prisma, t2.id, u2.id, { name: 'Other Product' });

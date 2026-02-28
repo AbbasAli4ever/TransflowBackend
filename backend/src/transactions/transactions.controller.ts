@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -41,6 +43,8 @@ import {
   TransactionListResponseDto,
   TransactionResponseDto,
 } from './dto/transaction-response.dto';
+import { ReturnableLinesResponseDto } from './dto/returnable-lines-response.dto';
+import { PatchTransactionDto } from './dto/patch-transaction.dto';
 
 @ApiTags('Transactions')
 @ApiBearerAuth('bearer')
@@ -186,9 +190,22 @@ export class TransactionsController {
   @ApiQuery({ name: 'customerId', required: false, type: String })
   @ApiQuery({ name: 'sortBy', required: false, enum: ['transactionDate', 'createdAt', 'totalAmount'] })
   @ApiQuery({ name: 'sortOrder', required: false, enum: ['asc', 'desc'] })
+  @ApiQuery({ name: 'partySearch', required: false, type: String, description: 'Search by supplier or customer name' })
+  @ApiQuery({ name: 'productId', required: false, type: String, description: 'Filter by product UUID in lines' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   findAll(@Query() query: ListTransactionsQueryDto) {
     return this.transactionsService.findAll(query);
+  }
+
+  @Get(':id/returnable-lines')
+  @ApiOperation({ summary: 'Get returnable line quantities for a POSTED PURCHASE or SALE' })
+  @ApiParam({ name: 'id', description: 'Transaction UUID' })
+  @ApiOkResponse({ description: 'Returnable lines per original line', type: ReturnableLinesResponseDto })
+  @ApiNotFoundResponse({ description: 'Transaction not found', type: ApiErrorResponse })
+  @ApiBadRequestResponse({ description: 'Transaction is not a POSTED PURCHASE or SALE', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  getReturnableLines(@Param('id', ParseUUIDPipe) id: string) {
+    return this.transactionsService.getReturnableLines(id);
   }
 
   @Get(':id')
@@ -200,5 +217,28 @@ export class TransactionsController {
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.transactionsService.findOne(id);
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: 'Delete a DRAFT transaction' })
+  @ApiParam({ name: 'id', description: 'Transaction UUID' })
+  @ApiOkResponse({ description: 'Transaction deleted', schema: { example: { message: 'Transaction deleted' } } })
+  @ApiNotFoundResponse({ description: 'Transaction not found', type: ApiErrorResponse })
+  @ApiBadRequestResponse({ description: 'Only DRAFT transactions can be deleted', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  delete(@Param('id', ParseUUIDPipe) id: string) {
+    return this.transactionsService.delete(id);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Edit a DRAFT transaction (all 8 types)' })
+  @ApiParam({ name: 'id', description: 'Transaction UUID' })
+  @ApiOkResponse({ description: 'Updated transaction', type: TransactionResponseDto })
+  @ApiNotFoundResponse({ description: 'Transaction not found', type: ApiErrorResponse })
+  @ApiBadRequestResponse({ description: 'Only DRAFT transactions can be edited', type: ApiErrorResponse })
+  @ApiUnprocessableEntityResponse({ description: 'Variant/party inactive or qty exceeds returnable', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: PatchTransactionDto) {
+    return this.transactionsService.update(id, dto);
   }
 }

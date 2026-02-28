@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Patch, Post } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
@@ -7,12 +7,15 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
   ApiCreatedResponse,
+  ApiBearerAuth,
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { Public } from '../common/decorators/public.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
 import { ApiErrorResponse } from '../common/swagger/api-error-response.dto';
 import { AuthResponseDto, LogoutResponseDto, RefreshTokenResponseDto } from './dto/auth-response.dto';
 
@@ -60,5 +63,16 @@ export class AuthController {
   async logout(@Body() dto: RefreshTokenDto) {
     await this.authService.logout(dto.refreshToken);
     return { message: 'Logged out' };
+  }
+
+  @Patch('tenant')
+  @Roles('OWNER')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update tenant settings (name, timezone, baseCurrency)' })
+  @ApiOkResponse({ description: 'Tenant updated', schema: { example: { id: 'uuid', name: 'Acme', baseCurrency: 'PKR', timezone: 'Asia/Karachi' } } })
+  @ApiBadRequestResponse({ description: 'No fields provided', type: ApiErrorResponse })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: ApiErrorResponse })
+  updateTenant(@Body() dto: UpdateTenantDto) {
+    return this.authService.updateTenant(dto);
   }
 }

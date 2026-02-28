@@ -12,36 +12,17 @@
 
 ## 1. MISSING ENDPOINTS (New APIs Needed)
 
-### 1.1 P&L Report Endpoint — **P0** (Screen 32)
-**Needed:** `GET /api/v1/reports/profit-loss?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD`
-**Why:** No P&L endpoint exists. Screen 32 requires sales revenue, sales returns, cost of goods sold, gross profit, and margin calculation — all impossible to compute efficiently on the frontend.
+### ~~1.1 P&L Report Endpoint~~ — ✓ RESOLVED (Screen 32)
+**Endpoint:** `GET /api/v1/reports/profit-loss?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD`
+**Implemented:** 2026-02-20
 
-**Response shape needed:**
-```json
-{
-  "dateFrom": "2026-01-01",
-  "dateTo": "2026-01-31",
-  "sales": 500000,
-  "salesReturns": 25000,
-  "netRevenue": 475000,
-  "costOfGoodsSold": 300000,
-  "grossProfit": 175000,
-  "grossProfitMargin": 36.84
-}
-```
-
-**Implementation notes:**
-- `sales` = SUM(totalAmount) WHERE type='SALE' AND status='POSTED' AND transactionDate BETWEEN dateFrom AND dateTo
-- `salesReturns` = SUM(totalAmount) WHERE type='CUSTOMER_RETURN' AND status='POSTED' AND date range
-- `costOfGoodsSold` = SUM(costTotal) from transaction lines WHERE type='SALE' AND posted AND date range
-- `grossProfit` = netRevenue - costOfGoodsSold
-- `grossProfitMargin` = (grossProfit / netRevenue) × 100
+**Note on COGS:** The spec said `SUM(costTotal)` from transaction_lines — this is incorrect. `costTotal` on SALE draft lines equals revenue (lineTotal), not cost. The correct source is `inventory_movements` WHERE `movement_type IN ('SALE_OUT', 'CUSTOMER_RETURN_IN')`, which records the actual unit cost at time of movement. COGS = SALE_OUT cost − CUSTOMER_RETURN_IN cost, giving net COGS that accounts for returns.
 
 ---
 
-### 1.2 Trial Balance Endpoint — **P1** (Screen 35)
-**Needed:** `GET /api/v1/reports/trial-balance?asOfDate=YYYY-MM-DD`
-**Why:** No trial balance endpoint exists.
+### ~~1.2 Trial Balance Endpoint~~ — ✓ RESOLVED (Screen 35)
+**Endpoint:** `GET /api/v1/reports/trial-balance?asOfDate=YYYY-MM-DD`
+**Implemented:** 2026-02-20
 
 **Response shape needed:**
 ```json
@@ -65,177 +46,109 @@
 
 ---
 
-### 1.3 Inventory Valuation Report Endpoint — **P0** (Screen 36)
-**Needed:** `GET /api/v1/reports/inventory-valuation?asOfDate=YYYY-MM-DD`
-**Why:** No bulk inventory valuation endpoint exists. The per-product stock endpoint (`GET /api/v1/reports/products/:id/stock`) requires knowing all product IDs and is N+1.
-
-**Response shape needed:**
-```json
-{
-  "asOfDate": "2026-02-18",
-  "grandTotalValue": 1500000,
-  "products": [
-    {
-      "productId": "uuid",
-      "productName": "Cotton T-Shirt",
-      "sku": "CT-001",
-      "category": "Apparel",
-      "variants": [
-        { "variantId": "uuid", "size": "M", "sku": "CT-001-M", "qtyOnHand": 50, "avgCost": 800, "totalValue": 40000 },
-        { "variantId": "uuid", "size": "L", "sku": "CT-001-L", "qtyOnHand": 30, "avgCost": 800, "totalValue": 24000 }
-      ],
-      "productTotalQty": 80,
-      "productTotalValue": 64000
-    }
-  ]
-}
-```
+### ~~1.3 Inventory Valuation Report Endpoint~~ — ✓ RESOLVED (Screen 36)
+**Endpoint:** `GET /api/v1/reports/inventory-valuation?asOfDate=YYYY-MM-DD`
+**Implemented:** 2026-02-20 — returns `{ asOfDate, grandTotalValue, products[{ productId, productName, sku, category, variants[{ variantId, size, sku, qtyOnHand, avgCost, totalValue }], productTotalQty, productTotalValue }] }`
 
 ---
 
-### 1.4 Tenant Update Endpoint — **P1** (Screen 42)
-**Needed:** `PATCH /api/v1/settings/tenant` or `PATCH /api/v1/auth/tenant`
-**Why:** Screen 42 (Business Profile) needs to update business name and timezone. No endpoint exists.
-
-**Body:** `{ name?: string, timezone?: string }`
-
----
-
-### 1.5 Users List Endpoint — **P1** (Screen 43)
-**Needed:** `GET /api/v1/users` (tenant-scoped)
-**Why:** Screen 43 (Users & Roles) needs to list all users in the tenant. No endpoint exists.
-
-**Response:** Array of `{ id, fullName, email, role, status, createdAt }`
+### ~~1.4 Tenant Update Endpoint~~ — ✓ RESOLVED (Screen 42)
+**Endpoint:** `PATCH /api/v1/auth/tenant`
+**Implemented:** 2026-02-20
+**Body:** `{ name?, timezone?, baseCurrency? }` — OWNER role required.
 
 ---
 
-### 1.6 User Role Change Endpoint — **P1** (Screen 43)
-**Needed:** `PATCH /api/v1/users/:id/role`
-**Why:** Screen 43 has "Change Role" action.
-
-**Body:** `{ role: "ADMIN" | "STAFF" }` (OWNER can't be changed)
+### ~~1.5 Users List Endpoint~~ — ✓ RESOLVED (Screen 43)
+**Endpoint:** `GET /api/v1/users` (tenant-scoped, paginated)
+**Implemented:** 2026-02-20
 
 ---
 
-### 1.7 User Deactivation Endpoint — **P1** (Screen 43)
-**Needed:** `PATCH /api/v1/users/:id/status`
-**Why:** Screen 43 has "Deactivate" action.
-
-**Body:** `{ status: "INACTIVE" }`
-
----
-
-### 1.8 Delete Draft Transaction Endpoint — **P1** (Screen 05)
-**Needed:** `DELETE /api/v1/transactions/:id`
-**Why:** Screen 05 has "Delete Draft" button. No delete endpoint exists.
-
-**Constraints:** Only DRAFT status transactions can be deleted. Must check no dependencies.
+### ~~1.6 User Role Change Endpoint~~ — ✓ RESOLVED (Screen 43)
+**Endpoint:** `PATCH /api/v1/users/:id/role`
+**Implemented:** 2026-02-20
+**Note:** Cannot change own role. Role must be OWNER or ADMIN.
 
 ---
 
-### 1.9 Edit Draft Transaction Endpoint — **P2** (Screen 05)
-**Needed:** `PATCH /api/v1/transactions/:id`
-**Why:** Screen 05 has "Edit" button for drafts. No PATCH endpoint exists.
-
-**Note:** This is complex — would need to allow updating lines, amounts, party etc. on a draft. Can be deferred (user can delete draft and recreate).
-
----
-
-### 1.10 Edit Product Variant Endpoint — **P2** (Screen 28)
-**Needed:** `PATCH /api/v1/products/:id/variants/:variantId`
-**Why:** Screen 28 has inline edit for variant size label and variant SKU. Currently only status change exists.
-
-**Body:** `{ size?: string, sku?: string }`
+### ~~1.7 User Deactivation Endpoint~~ — ✓ RESOLVED (Screen 43)
+**Endpoint:** `PATCH /api/v1/users/:id/status`
+**Implemented:** 2026-02-20
+**Note:** Cannot deactivate self or last active OWNER.
 
 ---
 
-### 1.11 Inventory Movements Endpoint — **P2** (Screen 28)
-**Needed:** `GET /api/v1/products/:id/movements?page=1&limit=20`
-**Why:** Screen 28 "Stock Movements" tab needs chronological list of inventory movements per product. Backend tracks `InventoryMovement` in DB but doesn't expose via API.
-
-**Response:** Array of `{ date, documentNumber, type, variantSize, quantityIn, quantityOut, runningStock }`
+### ~~1.8 Delete Draft Transaction Endpoint~~ — ✓ RESOLVED (Screen 05)
+**Endpoint:** `DELETE /api/v1/transactions/:id`
+**Implemented:** 2026-02-20
+**Constraints:** Only DRAFT status transactions can be deleted. Cascades child records in transaction.
 
 ---
 
-### 1.12 Returnable Lines Info Endpoint — **P2** (Screens 12, 13)
-**Needed:** `GET /api/v1/transactions/:id/returnable-lines`
-**Why:** Screens 12/13 need to show per-line "Already Returned" and "Returnable Qty". Backend validates this at draft creation but doesn't expose the data.
+### ~~1.9 Edit Draft Transaction Endpoint~~ — ✓ RESOLVED (Screen 05)
+**Endpoint:** `PATCH /api/v1/transactions/:id`
+**Implemented:** 2026-02-20
+**All 8 types supported.** PURCHASE/SALE: full line replacement via deleteMany+createMany + total recompute. PAYMENTS/TRANSFER: header + amount. RETURNS: per-line quantity update only (sourceTransactionLineId immutable, returnable qty re-validated). ADJUSTMENT: full line replacement.
 
-**Response:**
-```json
-{
-  "transactionId": "uuid",
-  "lines": [
-    {
-      "lineId": "uuid",
-      "productName": "Cotton T-Shirt",
-      "variantSize": "M",
-      "originalQty": 10,
-      "alreadyReturned": 3,
-      "returnableQty": 7
-    }
-  ]
-}
-```
+---
 
-**Workaround:** Frontend could submit the draft and let the backend reject if qty exceeds returnable — but UX is poor (no preview).
+### ~~1.10 Edit Product Variant Endpoint~~ — ✓ RESOLVED (Screen 28)
+**Endpoint:** `PATCH /api/v1/products/:id/variants/:variantId`
+**Implemented:** 2026-02-20
+**Body:** `{ size?, sku? }` — `P2002` → 409 if duplicate size within product.
+
+---
+
+### ~~1.11 Inventory Movements Endpoint~~ — ✓ RESOLVED (Screen 28)
+**Endpoint:** `GET /api/v1/products/:id/movements?page=1&limit=20`
+**Implemented:** 2026-02-20
+**Response:** `{ data: [{ date, documentNumber, type, variantSize, quantityIn, quantityOut, runningStock }], meta }` — running stock computed via stock-before-page sub-query.
+
+---
+
+### ~~1.12 Returnable Lines Info Endpoint~~ — ✓ RESOLVED (Screens 12, 13)
+**Endpoint:** `GET /api/v1/transactions/:id/returnable-lines`
+**Implemented:** 2026-02-20
+**Note:** Only works on POSTED PURCHASE or SALE transactions. Batch query for already-returned counts; no N+1.
 
 ---
 
 ## 2. MISSING RESPONSE FIELDS (Existing APIs Need Enhancement)
 
-### 2.1 Transaction List — Include Party Names — **P0** (Screen 04)
+### ~~2.1 Transaction List — Include Party Names~~ — **RESOLVED** ✓ (Screen 04)
 **Endpoint:** `GET /api/v1/transactions`
-**Issue:** `findAll` does NOT include `supplier`/`customer` relations — only `supplierId`/`customerId` UUIDs.
-**Fix:** Add `include: { supplier: { select: { id: true, name: true } }, customer: { select: { id: true, name: true } } }` to the list query.
-
-**Impact:** Without this, the transactions list cannot show party names — requires N+1 lookups or client-side cache join.
+**Fix applied:** `findAll` now includes `supplier: { select: { id, name } }` and `customer: { select: { id, name } }`. Both `supplier.name` and `customer.name` are available in list response.
 
 ---
 
-### 2.2 Supplier/Customer List — Include Balance — **P1** (Screens 16, 21)
+### ~~2.2 Supplier/Customer List — Include Balance~~ — **RESOLVED** ✓ (Screens 16, 21)
 **Endpoint:** `GET /api/v1/suppliers`, `GET /api/v1/customers`
-**Issue — CONFIRMED:** `_computed` was removed in Remediation Wave 5 ("Misleading _computed placeholder fields removed"). The `findAll` methods do plain `prisma.supplier.findMany()` / `prisma.customer.findMany()` with **zero balance data**. The DTO class still defines `_computed` but services never populate it.
-**Impact:** Supplier/Customer list views cannot show "Current Balance" column.
-**Options:**
-  - **(A)** Re-add a lightweight `currentBalance` field to list responses via a raw SQL subquery or Prisma `$queryRaw` (compute balance inline per page of results)
-  - **(B)** Add a batch balance endpoint: `GET /api/v1/suppliers/balances?ids=uuid1,uuid2,...`
-  - **(C)** Frontend calls per-entity `/balance` endpoint (N+1, unacceptable for lists)
-
-**Recommendation:** Option A — add a single `currentBalance` field per list item via a subquery. Can be done with a single raw SQL query that joins with ledger_entries aggregation for the current page of supplier/customer IDs. Does NOT need the full `_computed` object with `totalPurchases`, `lastPurchaseDate`, etc.
+**Fix applied:** `findAll` now runs one batch `$queryRaw` per page to aggregate `currentBalance` (AP_INCREASE − AP_DECREASE for suppliers; AR_INCREASE − AR_DECREASE for customers). `currentBalance` is present on every list item — no N+1.
 
 ---
 
-### 2.3 Payment Account List — Include Balance — **P1** (Screen 29)
+### ~~2.3 Payment Account List — Include Balance~~ — **RESOLVED** ✓ (Screen 29)
 **Endpoint:** `GET /api/v1/payment-accounts`
-**Issue — CONFIRMED:** Same as 2.2 — `_computed` was removed. `findAll` does plain `prisma.paymentAccount.findMany()`. List has `openingBalance` (stored field) but no `currentBalance`, `totalIn`, `totalOut`.
-**Fix:** Add computed fields to list response via raw SQL subquery on payment_entries for the current page of account IDs. At minimum need `currentBalance` (= openingBalance + totalIn - totalOut).
+**Fix applied:** `findAll` now runs one batch `$queryRaw` per page to aggregate `totalIn`/`totalOut` from posted `payment_entries`. `_computed.currentBalance`, `_computed.totalIn`, `_computed.totalOut` are present on every list item — no N+1.
 
 ---
 
-### 2.4 Product List — Include Stock Totals — **P1** (Screen 26)
+### ~~2.4 Product List — Include Stock Totals~~ — **RESOLVED** ✓ (Screen 26)
 **Endpoint:** `GET /api/v1/products`
-**Issue:** Product list doesn't include stock data. Screen 26 needs "Total Stock" column.
-**Fix:** Add a computed `totalStock` field to list items via an aggregation subquery on InventoryMovement.
-
-**Note:** This can be expensive. Consider:
-- A materialized view or cached value
-- Only computing for the current page of results
-- A separate batch endpoint
+**Fix applied:** `findAll` now runs one batch `$queryRaw` per page to aggregate `currentStock` per variant from `inventory_movements`, then merges `currentStock` onto each variant and computes `totalStock` per product. Both `totalStock` (product-level) and `variants[].currentStock` (per size) are present in list response — no N+1.
 
 ---
 
-### 2.5 Statement Entries — Add Description — **P2** (Screens 19, 24)
+### ~~2.5 Statement Entries — Add Description~~ — **RESOLVED** ✓ (Screens 19, 24)
 **Endpoint:** `GET /api/v1/reports/suppliers/:id/statement`, `GET /api/v1/reports/customers/:id/statement`
-**Issue:** `StatementDebitCreditEntryDto` has no `description` field. Wireframe wants a "Description" column.
-**Fix:** Add `description` derived from transaction `notes` or auto-generated from type (e.g., "Purchase from Supplier X", "Payment via Cash").
+**Fix applied:** `description` field added to statement entries — maps to `t.notes` on the transaction. Nullable (null when transaction has no notes).
 
 ---
 
-### 2.6 Payment Account Statement — Add Party Name — **P2** (Screen 31)
+### ~~2.6 Payment Account Statement — Add Party Name~~ — **RESOLVED** ✓ (Screen 31)
 **Endpoint:** `GET /api/v1/reports/payment-accounts/:id/statement`
-**Issue:** Statement entries have no party name. Wireframe shows a "Party" column.
-**Fix:** JOIN supplier/customer name into the statement query.
+**Fix applied:** LEFT JOIN suppliers + customers on `pe.supplier_id` / `pe.customer_id`. `partyName` (nullable) added to each statement entry. `null` for internal transfers.
 
 ---
 
@@ -245,55 +158,35 @@
 
 ---
 
-### 2.8 Dashboard Recent Activity — **P1** (Screen 03)
-**Endpoint:** `GET /api/v1/dashboard/summary`
-**Issue:** `recentActivity` only returns aggregate today-totals (`todaySales`, `todayPurchases`, `todayPayments`, `todayReceipts`). Wireframe wants a "Last 10 transactions" table with Date, Type, Party, Amount, Status.
-**Options:**
-  - **(A)** Add `recentTransactions[]` array to dashboard response (top 10 recent posted transactions with party name)
-  - **(B)** Frontend makes a second call: `GET /api/v1/transactions?limit=10&sortBy=createdAt&sortOrder=desc`
-
-**Recommendation:** Option B is simpler and avoids bloating the dashboard query. But needs party name fix from 2.1 first.
+### ~~2.8 Dashboard Recent Activity~~ — **RESOLVED** ✓ (Screen 03)
+**No backend change needed.** `GET /api/v1/transactions?limit=10&sortBy=createdAt&sortOrder=desc&status=POSTED` already returns the last 10 transactions with `supplier.name` and `customer.name`. Frontend makes this as a second parallel call alongside `GET /api/v1/dashboard/summary`.
 
 ---
 
-### 2.9 Import Upload — Add Sample Row Values — **P3** (Screen 39)
-**Endpoint:** `POST /api/v1/imports`
-**Issue:** Upload response returns `detectedColumns[]` (header names) but no sample values. Wireframe wants "first 2 sample values" per column.
-**Fix:** Add `sampleValues: Record<string, string[]>` to `ImportUploadResponseDto` — each key is a column header, value is first 2 row values.
+### ~~2.9 Import Upload — Add Sample Row Values~~ — **RESOLVED** ✓ (Screen 39)
+**Implemented:** 2026-02-20 — `sampleValues: Record<string, string[]>` added to upload response. Each key is a column header; value is first 2 non-empty row values.
 
 ---
 
-### 2.10 Transaction findOne — CreatedBy User Name — **P3** (Screen 05)
-**Endpoint:** `GET /api/v1/transactions/:id`
-**Issue:** Response includes `createdBy` as UUID but no user name/email.
-**Fix:** Add `include: { createdByUser: { select: { fullName: true } } }` or return `createdByName` field.
+### ~~2.10 Transaction findOne — CreatedBy User Name~~ — **RESOLVED** ✓ (Screen 05)
+**Implemented:** 2026-02-20 — `findOne` now includes `createdByUser: { select: { fullName: true } }`. Response has `createdByUser: { fullName }` (null if no user linked).
 
 ---
 
-### 2.11 Import Detail — CreatedBy User — **P3** (Screen 41)
-**Endpoint:** `GET /api/v1/imports/:id`
-**Issue:** No `createdBy` / `committedBy` user info.
-**Fix:** Include user relation in import batch query.
+### ~~2.11 Import Detail — CreatedBy User~~ — **RESOLVED** ✓ (Screen 41)
+**Implemented:** 2026-02-20 — `getBatchDetail` now includes `createdByUser: { select: { fullName: true } }`. Response has `createdByUser: { fullName }` alongside all batch fields.
 
 ---
 
 ## 3. MISSING QUERY CAPABILITIES
 
-### 3.1 Transaction List — Text Search for Party Name — **P2** (Screen 04)
-**Current:** `?supplierId=uuid` and `?customerId=uuid` (UUID only)
-**Needed:** `?partySearch=text` — searches across both supplier and customer names
-**Why:** Wireframe has a text search input for party name
-
-**Workaround:** Frontend searches suppliers/customers first via their respective list APIs, collects matching IDs, then filters transactions by ID. Works but clunky.
+### ~~3.1 Transaction List — Text Search for Party Name~~ — **RESOLVED** ✓ (Screen 04)
+**Fix applied:** `?partySearch=text` added to `ListTransactionsQueryDto` and `findAll()`. Uses Prisma `OR: [supplier.name contains, customer.name contains]` with `mode: 'insensitive'`.
 
 ---
 
-### 3.2 Transaction List — Filter by Product — **P2** (Screen 28)
-**Current:** No `productId` or `variantId` filter on transactions list
-**Needed:** `?productId=uuid` to filter transactions that contain a specific product in their lines
-**Why:** Screen 28 tabs "Purchase History" and "Sale History" need transactions filtered by product
-
-**Workaround:** None feasible — would require fetching all transactions and filtering client-side.
+### ~~3.2 Transaction List — Filter by Product~~ — **RESOLVED** ✓ (Screen 28)
+**Fix applied:** `?productId=uuid` added. Uses Prisma `transactionLines: { some: { variant: { productId } } }` nested filter.
 
 ---
 
@@ -304,14 +197,8 @@
 
 ## 4. RESPONSE SHAPE INCONSISTENCIES
 
-### 4.1 Transaction DTO vs Actual Response
-**Issue:** `TransactionResponseDto` class doesn't include `documentNumber`, `supplier`, `customer`, `paymentEntries`, `ledgerEntries`, `inventoryMovements` — but the actual `findOne` response returns all of these (raw Prisma with includes).
-
-**Risk:** Swagger docs are misleading. Frontend devs relying on swagger will miss available fields.
-
-**Fix:** Either:
-- **(A)** Update `TransactionResponseDto` to document all actually-returned fields
-- **(B)** Add a mapper function that transforms Prisma result into a proper DTO (preferred for consistency)
+### ~~4.1 Transaction DTO vs Actual Response~~ — **RESOLVED** ✓
+**Implemented:** 2026-02-20 — `TransactionResponseDto` now documents all fields returned by `findOne`: `documentNumber`, `createdByUser`, `inventoryMovements`, `ledgerEntries`, `paymentEntries`. `TransactionLineResponseDto` now documents `variant` (with nested `product`). Swagger is accurate.
 
 ---
 
@@ -357,73 +244,57 @@ These wireframe features are entirely frontend concerns:
 ### P0 — Blockers (Screen non-functional)
 | # | Item | Screens Affected |
 |---|---|---|
-| 1.1 | P&L Report endpoint | 32 |
-| 1.3 | Inventory Valuation endpoint | 36 |
-| 2.1 | Transaction list include party names | 04 |
+| ~~1.1~~ | ~~P&L Report endpoint~~ | ~~32~~ **RESOLVED ✓** |
+| ~~1.3~~ | ~~Inventory Valuation endpoint~~ | ~~36~~ **RESOLVED ✓** |
+| ~~2.1~~ | ~~Transaction list include party names~~ | ~~04~~ **RESOLVED ✓** |
 
 ### P1 — Major (Key feature missing)
 | # | Item | Screens Affected |
 |---|---|---|
-| 1.2 | Trial Balance endpoint | 35 |
-| 1.4 | Tenant update endpoint | 42 |
-| 1.5 | Users list endpoint | 43 |
-| 1.6 | User role change endpoint | 43 |
-| 1.7 | User deactivation endpoint | 43 |
-| 1.8 | Delete draft transaction | 05 |
-| 2.2 | Supplier/Customer list include balance | 16, 21 |
-| 2.3 | Payment account list include balance | 29 |
-| 2.4 | Product list include stock totals | 26 |
-| 2.8 | Dashboard recent transactions | 03 |
+| ~~1.2~~ | ~~Trial Balance endpoint~~ | ~~35~~ **RESOLVED ✓** |
+| ~~1.4~~ | ~~Tenant update endpoint~~ | ~~42~~ **RESOLVED ✓** |
+| ~~1.5~~ | ~~Users list endpoint~~ | ~~43~~ **RESOLVED ✓** |
+| ~~1.6~~ | ~~User role change endpoint~~ | ~~43~~ **RESOLVED ✓** |
+| ~~1.7~~ | ~~User deactivation endpoint~~ | ~~43~~ **RESOLVED ✓** |
+| ~~1.8~~ | ~~Delete draft transaction~~ | ~~05~~ **RESOLVED ✓** |
+| ~~2.2~~ | ~~Supplier/Customer list include balance~~ | ~~16, 21~~ **RESOLVED ✓** |
+| ~~2.3~~ | ~~Payment account list include balance~~ | ~~29~~ **RESOLVED ✓** |
+| ~~2.4~~ | ~~Product list include stock totals~~ | ~~26~~ **RESOLVED ✓** |
+| ~~2.8~~ | ~~Dashboard recent transactions~~ | ~~03~~ **RESOLVED ✓** |
 
 ### P2 — Minor (Workaround available)
 | # | Item | Screens Affected |
 |---|---|---|
-| 1.9 | Edit draft transaction | 05 |
-| 1.10 | Edit product variant (size/sku) | 28 |
-| 1.11 | Inventory movements endpoint | 28 |
-| 1.12 | Returnable lines info endpoint | 12, 13 |
-| 2.5 | Statement entry description field | 19, 24 |
-| 2.6 | Payment account statement party name | 31 |
-| ~~2.7~~ | ~~Open documents document number~~ | ~~20, 25~~ (RESOLVED ✓) |
-| 3.1 | Party name text search on transactions | 04 |
-| 3.2 | Product filter on transactions | 28 |
+| ~~1.9~~ | ~~Edit draft transaction~~ | ~~05~~ **RESOLVED ✓** |
+| ~~1.10~~ | ~~Edit product variant (size/sku)~~ | ~~28~~ **RESOLVED ✓** |
+| ~~1.11~~ | ~~Inventory movements endpoint~~ | ~~28~~ **RESOLVED ✓** |
+| ~~1.12~~ | ~~Returnable lines info endpoint~~ | ~~12, 13~~ **RESOLVED ✓** |
+| ~~2.5~~ | ~~Statement entry description field~~ | ~~19, 24~~ **RESOLVED ✓** |
+| ~~2.6~~ | ~~Payment account statement party name~~ | ~~31~~ **RESOLVED ✓** |
+| ~~2.7~~ | ~~Open documents document number~~ | ~~20, 25~~ **RESOLVED ✓** |
+| ~~3.1~~ | ~~Party name text search on transactions~~ | ~~04~~ **RESOLVED ✓** |
+| ~~3.2~~ | ~~Product filter on transactions~~ | ~~28~~ **RESOLVED ✓** |
 
 ### P3 — Nice to have
 | # | Item | Screens Affected |
 |---|---|---|
-| 2.9 | Import sample values in upload response | 39 |
-| 2.10 | CreatedBy user name on transaction | 05 |
-| 2.11 | CreatedBy user on import detail | 41 |
-| 4.1 | DTO vs actual response alignment | All |
+| ~~2.9~~ | ~~Import sample values in upload response~~ | ~~39~~ **RESOLVED ✓** |
+| ~~2.10~~ | ~~CreatedBy user name on transaction~~ | ~~05~~ **RESOLVED ✓** |
+| ~~2.11~~ | ~~CreatedBy user on import detail~~ | ~~41~~ **RESOLVED ✓** |
+| ~~4.1~~ | ~~DTO vs actual response alignment~~ | ~~All~~ **RESOLVED ✓** |
 
 ---
 
-## 7. RECOMMENDED IMPLEMENTATION ORDER
+## 7. IMPLEMENTATION STATUS
 
-**Phase 1 — Unblock core screens (1-2 days):**
-1. Transaction list: add `supplier`/`customer` include (2.1)
-2. Supplier/Customer/PaymentAccount lists: re-add computed balance (2.2, 2.3)
-3. Product list: add stock totals (2.4)
+All P0, P1, and P2 items completed on 2026-02-20. Only P3 items remain.
 
-**Phase 2 — Reports (1-2 days):**
-4. P&L report endpoint (1.1)
-5. Inventory valuation report endpoint (1.3)
-6. Trial balance endpoint (1.2)
+**✓ Phase 1 — Core screen unblocking:** 2.1, 2.2, 2.3, 2.4
+**✓ Phase 2 — Reports:** 1.1, 1.3, 1.2
+**✓ Phase 3 — Transaction management:** 1.8, 2.8 (frontend)
+**✓ Phase 4 — User management:** 1.4, 1.5, 1.6, 1.7
+**✓ Phase 5 — Polish:** 1.9, 1.10, 1.11, 1.12, 2.5, 2.6, 3.1, 3.2
 
-**Phase 3 — Transaction management (1 day):**
-7. Delete draft endpoint (1.8)
-8. Dashboard: use separate transaction list call for recent activity (frontend)
+**✓ Phase 6 — P3 polish (2026-02-20):** 2.9, 2.10, 2.11, 4.1
 
-**Phase 4 — User management (1 day):**
-10. Users list endpoint (1.5)
-11. User role change (1.6)
-12. User deactivation (1.7)
-13. Tenant update endpoint (1.4)
-
-**Phase 5 — Polish (1-2 days):**
-14. Returnable lines endpoint (1.12)
-15. Inventory movements endpoint (1.11)
-16. Edit variant size/sku (1.10)
-17. Statement description fields (2.5, 2.6)
-18. Edit draft transaction (1.9)
-19. DTO alignment (4.1)
+**All items complete. No pending backend work remaining.**

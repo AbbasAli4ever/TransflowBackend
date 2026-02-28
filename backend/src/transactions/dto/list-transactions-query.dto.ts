@@ -1,4 +1,4 @@
-import { IsOptional, IsEnum, IsDateString, IsUUID, IsIn, registerDecorator, ValidationArguments, ValidationOptions } from 'class-validator';
+import { IsOptional, IsEnum, IsDateString, IsUUID, IsIn, IsString, registerDecorator, ValidationArguments, ValidationOptions } from 'class-validator';
 import { TransactionType, TransactionStatus } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { ApiPropertyOptional } from '@nestjs/swagger';
@@ -67,4 +67,14 @@ export class ListTransactionsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(['asc', 'desc'])
   sortOrder?: 'asc' | 'desc';
+
+  @ApiPropertyOptional({ example: 'Acme', description: 'Search by supplier or customer name (case-insensitive)' })
+  @IsOptional()
+  @IsString()
+  partySearch?: string;
+
+  @ApiPropertyOptional({ example: 'product-uuid', description: 'Filter transactions that contain this product in any line' })
+  @IsOptional()
+  @IsUUID()
+  productId?: string;
 }

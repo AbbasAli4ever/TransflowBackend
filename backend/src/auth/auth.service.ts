@@ -1,4 +1,4 @@
-import { ConflictException, UnauthorizedException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, UnauthorizedException, Injectable, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
@@ -7,6 +7,8 @@ import { hash, compare } from 'bcrypt';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { createHash, randomUUID } from 'crypto';
+import { getContext } from '../common/request-context';
+import { UpdateTenantDto } from './dto/update-tenant.dto';
 
 const PASSWORD_SALT_ROUNDS = 12;
 
@@ -204,6 +206,28 @@ export class AuthService {
       tenantId,
       tokenHash: this.hashToken(rawToken),
       expiresAt,
+    };
+  }
+
+  async updateTenant(dto: UpdateTenantDto) {
+    const tenantId = getContext()?.tenantId;
+    if (!tenantId) throw new UnauthorizedException();
+
+    const fields = Object.keys(dto).filter((k) => (dto as any)[k] !== undefined);
+    if (fields.length === 0) {
+      throw new BadRequestException('At least one field must be provided');
+    }
+
+    const updated = await this.prisma.tenant.update({
+      where: { id: tenantId },
+      data: dto,
+    });
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      baseCurrency: updated.baseCurrency,
+      timezone: updated.timezone,
     };
   }
 

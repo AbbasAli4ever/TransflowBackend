@@ -18,11 +18,12 @@ const prefixMap: Record<string, string> = {
 
 const seqCounters: Record<string, number> = {};
 
-function nextDocNumber(type: string, year = 2026): string {
-  const key = type;
-  seqCounters[key] = (seqCounters[key] ?? 0) + 1;
+// FIX: use the year from the actual transaction date
+function nextDocNumber(type: string, transactionDate: string): string {
+  const year = new Date(transactionDate + 'T00:00:00Z').getUTCFullYear();
+  seqCounters[type] = (seqCounters[type] ?? 0) + 1;
   const prefix = prefixMap[type] ?? type.substring(0, 3);
-  return `${prefix}-${year}-${String(seqCounters[key]).padStart(4, '0')}`;
+  return `${prefix}-${year}-${String(seqCounters[type]).padStart(4, '0')}`;
 }
 
 function date(d: string): Date {
@@ -33,13 +34,35 @@ function dateTime(ts: string): Date {
   return new Date(ts);
 }
 
+// ─── FIX: Truncate all tables before seeding (replaces idempotency skip) ─────
+async function truncateAll() {
+  await prisma.$executeRaw`
+    TRUNCATE TABLE
+      import_rows,
+      import_batches,
+      allocations,
+      payment_entries,
+      ledger_entries,
+      inventory_movements,
+      transaction_lines,
+      transactions,
+      document_sequences,
+      payment_accounts,
+      product_variants,
+      products,
+      status_change_logs,
+      customers,
+      suppliers,
+      refresh_tokens,
+      users,
+      tenants
+    RESTART IDENTITY CASCADE
+  `;
+  console.log('✓ Database truncated — fresh seed starting...\n');
+}
+
 async function seed() {
-  // ── Idempotency check ─────────────────────────────────────────────────────
-  const existing = await prisma.user.findUnique({ where: { email: 'owner@persona.pk' } });
-  if (existing) {
-    console.log('Already seeded — skipping (owner@persona.pk exists)');
-    return;
-  }
+  await truncateAll();
 
   console.log('🌱 Starting comprehensive seed...\n');
 
@@ -82,7 +105,6 @@ async function seed() {
   const suppliers = await Promise.all(
     supplierData.map((s) => prisma.supplier.create({ data: { tenantId: T, createdBy: owner.id, ...s } })),
   );
-  // Deactivate one supplier for status-filter testing
   await prisma.supplier.update({ where: { id: suppliers[5].id }, data: { status: 'INACTIVE' } });
   console.log(`✓ Suppliers: ${suppliers.length} (1 inactive)`);
 
@@ -102,7 +124,6 @@ async function seed() {
   const customers = await Promise.all(
     customerData.map((c) => prisma.customer.create({ data: { tenantId: T, createdBy: owner.id, ...c } })),
   );
-  // Deactivate one customer for testing inactive filters
   await prisma.customer.update({ where: { id: customers[7].id }, data: { status: 'INACTIVE' } });
   console.log(`✓ Customers: ${customers.length} (1 inactive)`);
 
@@ -152,7 +173,6 @@ async function seed() {
     });
   }
 
-  // Add one archived/legacy product to exercise inactive status filters
   const legacyProduct = await prisma.product.create({
     data: {
       tenantId: T,
@@ -175,14 +195,12 @@ async function seed() {
     variants: legacyProduct.variants.map((vr) => ({ id: vr.id, size: vr.size })),
   });
 
-  // Mark one active product variant inactive for variant-status filter testing
   const size44 = products[7].variants.find((vr) => vr.size === '44');
   if (!size44) throw new Error('Formal Shoes size 44 variant not found');
   await prisma.productVariant.update({ where: { id: size44.id }, data: { status: 'INACTIVE' } });
 
   console.log(`✓ Products: ${products.length} (${products.reduce((s, p) => s + p.variants.length, 0)} variants total, with inactive product + variant)`);
 
-  // Helper to find variant by product index + size
   function v(productIdx: number, size: string): string {
     const variant = products[productIdx].variants.find((vr) => vr.size === size);
     if (!variant) throw new Error(`Variant not found: product=${products[productIdx].name} size=${size}`);
@@ -211,7 +229,6 @@ async function seed() {
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('\n─── Creating transactions ───');
 
-  // ── 6.1  PURCHASE #1: From ABC Textiles — Men Suit Black (bulk) ──────────
   const pur1 = await createPostedPurchase({
     tenantId: T, userId: owner.id,
     supplierId: suppliers[0].id,
@@ -225,16 +242,15 @@ async function seed() {
     ],
     deliveryFee: 5000,
     paidNow: 200000,
-    paymentAccountId: accounts[1].id,  // HBL
+    paymentAccountId: accounts[1].id,
     notes: 'Initial stock - Black suits',
   });
   console.log(`  ✓ PUR #1: ${pur1.documentNumber} — PKR ${pur1.totalAmount.toLocaleString()} (paid ${pur1.paidNow.toLocaleString()})`);
 
-  // ── 6.2  PURCHASE #2: From XYZ Fabrics — Navy suits + Shirts ────────────
   const pur2 = await createPostedPurchase({
     tenantId: T, userId: owner.id,
     supplierId: suppliers[1].id,
-    transactionDate: '2025-12-05',
+    transactionDate: '2026-01-08',
     lines: [
       { variantId: v(1, 'M'),  qty: 25, unitCost: 8500, discount: 500 },
       { variantId: v(1, 'L'),  qty: 25, unitCost: 8500, discount: 500 },
@@ -243,29 +259,27 @@ async function seed() {
       { variantId: v(3, 'L'),  qty: 50, unitCost: 2500, discount: 0 },
     ],
     deliveryFee: 3000,
-    paidNow: 0,  // Fully on credit
+    paidNow: 0,
     notes: 'Navy suits + white shirts bulk order',
   });
   console.log(`  ✓ PUR #2: ${pur2.documentNumber} — PKR ${pur2.totalAmount.toLocaleString()} (on credit)`);
 
-  // ── 6.3  PURCHASE #3: Accessories from Royal Button House ────────────────
   const pur3 = await createPostedPurchase({
     tenantId: T, userId: admin.id,
     supplierId: suppliers[4].id,
     transactionDate: '2026-01-05',
     lines: [
-      { variantId: v(5, 'one-size'), qty: 100, unitCost: 1200, discount: 0 },  // Ties
-      { variantId: v(6, 'M'),        qty: 50,  unitCost: 2000, discount: 0 },  // Belts
-      { variantId: v(6, 'L'),        qty: 30,  unitCost: 2000, discount: 0 },  // Belts
+      { variantId: v(5, 'one-size'), qty: 100, unitCost: 1200, discount: 0 },
+      { variantId: v(6, 'M'),        qty: 50,  unitCost: 2000, discount: 0 },
+      { variantId: v(6, 'L'),        qty: 30,  unitCost: 2000, discount: 0 },
     ],
     deliveryFee: 1000,
     paidNow: 100000,
-    paymentAccountId: accounts[0].id,  // Cash
+    paymentAccountId: accounts[0].id,
     notes: 'Accessories restock',
   });
   console.log(`  ✓ PUR #3: ${pur3.documentNumber} — PKR ${pur3.totalAmount.toLocaleString()}`);
 
-  // ── 6.4  PURCHASE #4: Formal shoes from Pakistan Garments ────────────────
   const pur4 = await createPostedPurchase({
     tenantId: T, userId: owner.id,
     supplierId: suppliers[2].id,
@@ -282,11 +296,10 @@ async function seed() {
   });
   console.log(`  ✓ PUR #4: ${pur4.documentNumber} — PKR ${pur4.totalAmount.toLocaleString()}`);
 
-  // ── 6.5  PURCHASE #5: Blue shirts — partial payment ─────────────────────
   const pur5 = await createPostedPurchase({
     tenantId: T, userId: owner.id,
     supplierId: suppliers[1].id,
-    transactionDate: '2026-02-18',
+    transactionDate: '2026-01-15',
     lines: [
       { variantId: v(4, 'S'),  qty: 30, unitCost: 2800, discount: 200 },
       { variantId: v(4, 'M'),  qty: 50, unitCost: 2800, discount: 200 },
@@ -300,7 +313,6 @@ async function seed() {
   });
   console.log(`  ✓ PUR #5: ${pur5.documentNumber} — PKR ${pur5.totalAmount.toLocaleString()}`);
 
-  // ── 6.6  PURCHASE #6 (DRAFT): Charcoal suits — not posted yet ───────────
   const pur6Draft = await createDraftPurchase({
     tenantId: T, userId: owner.id,
     supplierId: suppliers[0].id,
@@ -315,7 +327,6 @@ async function seed() {
   });
   console.log(`  ✓ PUR #6: DRAFT — PKR ${pur6Draft.totalAmount.toLocaleString()}`);
 
-  // ── 6.7  SALE #1: To Fashion Hub Karachi ────────────────────────────────
   const sal1 = await createPostedSale({
     tenantId: T, userId: staff.id,
     customerId: customers[0].id,
@@ -333,7 +344,6 @@ async function seed() {
   });
   console.log(`  ✓ SAL #1: ${sal1.documentNumber} — PKR ${sal1.totalAmount.toLocaleString()} (received ${sal1.paidNow.toLocaleString()})`);
 
-  // ── 6.8  SALE #2: To Style Corner Lahore ────────────────────────────────
   const sal2 = await createPostedSale({
     tenantId: T, userId: staff.id,
     customerId: customers[1].id,
@@ -349,7 +359,6 @@ async function seed() {
   });
   console.log(`  ✓ SAL #2: ${sal2.documentNumber} — PKR ${sal2.totalAmount.toLocaleString()} (on credit)`);
 
-  // ── 6.9  SALE #3: To Budget Mart ────────────────────────────────────────
   const sal3 = await createPostedSale({
     tenantId: T, userId: owner.id,
     customerId: customers[2].id,
@@ -361,12 +370,11 @@ async function seed() {
     ],
     deliveryFee: 1500,
     receivedNow: 50000,
-    paymentAccountId: accounts[2].id,  // JazzCash
+    paymentAccountId: accounts[2].id,
     notes: 'Budget Mart - mixed order',
   });
   console.log(`  ✓ SAL #3: ${sal3.documentNumber} — PKR ${sal3.totalAmount.toLocaleString()}`);
 
-  // ── 6.10 SALE #4: To Al-Noor Collection (large wholesale) ───────────────
   const sal4 = await createPostedSale({
     tenantId: T, userId: owner.id,
     customerId: customers[3].id,
@@ -384,7 +392,6 @@ async function seed() {
   });
   console.log(`  ✓ SAL #4: ${sal4.documentNumber} — PKR ${sal4.totalAmount.toLocaleString()}`);
 
-  // ── 6.11 SALE #5: To Trendy Wear (shoe-focused) ────────────────────────
   const sal5 = await createPostedSale({
     tenantId: T, userId: staff.id,
     customerId: customers[4].id,
@@ -400,7 +407,6 @@ async function seed() {
   });
   console.log(`  ✓ SAL #5: ${sal5.documentNumber} — PKR ${sal5.totalAmount.toLocaleString()}`);
 
-  // ── 6.12 SALE #6 (DRAFT): To Classic Garments ──────────────────────────
   const sal6Draft = await createDraftSale({
     tenantId: T, userId: staff.id,
     customerId: customers[5].id,
@@ -414,7 +420,6 @@ async function seed() {
   });
   console.log(`  ✓ SAL #6: DRAFT — PKR ${sal6Draft.totalAmount.toLocaleString()}`);
 
-  // ── 6.13 SUPPLIER PAYMENT #1: Pay ABC Textiles ──────────────────────────
   const spy1 = await createPostedSupplierPayment({
     tenantId: T, userId: owner.id,
     supplierId: suppliers[0].id,
@@ -426,19 +431,17 @@ async function seed() {
   });
   console.log(`  ✓ SPY #1: ${spy1.documentNumber} — PKR 300,000 to ABC Textiles`);
 
-  // ── 6.14 SUPPLIER PAYMENT #2: Pay XYZ Fabrics ──────────────────────────
   const spy2 = await createPostedSupplierPayment({
     tenantId: T, userId: owner.id,
     supplierId: suppliers[1].id,
     amount: 200000,
     paymentAccountId: accounts[0].id,
-    transactionDate: '2026-02-18',
+    transactionDate: '2026-01-28',
     allocateToTransactionId: pur2.id,
     notes: 'Payment against navy suits invoice',
   });
   console.log(`  ✓ SPY #2: ${spy2.documentNumber} — PKR 200,000 to XYZ Fabrics`);
 
-  // ── 6.15 CUSTOMER PAYMENT #1: From Fashion Hub ─────────────────────────
   const cpy1 = await createPostedCustomerPayment({
     tenantId: T, userId: owner.id,
     customerId: customers[0].id,
@@ -450,7 +453,6 @@ async function seed() {
   });
   console.log(`  ✓ CPY #1: ${cpy1.documentNumber} — PKR 150,000 from Fashion Hub`);
 
-  // ── 6.16 CUSTOMER PAYMENT #2: From Style Corner ────────────────────────
   const cpy2 = await createPostedCustomerPayment({
     tenantId: T, userId: owner.id,
     customerId: customers[1].id,
@@ -462,7 +464,6 @@ async function seed() {
   });
   console.log(`  ✓ CPY #2: ${cpy2.documentNumber} — PKR 100,000 from Style Corner`);
 
-  // ── 6.17 CUSTOMER PAYMENT #3: From Al-Noor ─────────────────────────────
   const cpy3 = await createPostedCustomerPayment({
     tenantId: T, userId: owner.id,
     customerId: customers[3].id,
@@ -474,8 +475,6 @@ async function seed() {
   });
   console.log(`  ✓ CPY #3: ${cpy3.documentNumber} — PKR 250,000 from Al-Noor`);
 
-  // ── 6.18 SUPPLIER RETURN: Return defective ties to Royal Button House ──
-  // Find the tie line from PUR #3
   const pur3Lines = await prisma.transactionLine.findMany({ where: { transactionId: pur3.id } });
   const tieLine = pur3Lines.find((l) => l.variantId === v(5, 'one-size'));
   if (!tieLine) throw new Error('Tie line not found in PUR #3');
@@ -489,7 +488,6 @@ async function seed() {
   });
   console.log(`  ✓ SRN #1: ${srn1.documentNumber} — 10 ties returned to Royal Button House`);
 
-  // ── 6.19 CUSTOMER RETURN: Fashion Hub returns 3 suits ──────────────────
   const sal1Lines = await prisma.transactionLine.findMany({ where: { transactionId: sal1.id } });
   const suitMLine = sal1Lines.find((l) => l.variantId === v(0, 'M'));
   if (!suitMLine) throw new Error('Suit M line not found in SAL #1');
@@ -498,13 +496,12 @@ async function seed() {
     tenantId: T, userId: owner.id,
     customerId: customers[0].id,
     transactionDate: '2025-12-01',
-    lines: [{ sourceTransactionLineId: suitMLine.id, variantId: suitMLine.variantId, qty: 2, unitPrice: suitMLine.unitPrice }],
+    lines: [{ sourceTransactionLineId: suitMLine.id, variantId: suitMLine.variantId, qty: 2 }],
     returnHandling: 'STORE_CREDIT',
     notes: 'Customer returned 2 suits - wrong size',
   });
   console.log(`  ✓ CRN #1: ${crn1.documentNumber} — 2 suits returned by Fashion Hub (store credit)`);
 
-  // ── 6.20 INTERNAL TRANSFER: Cash → HBL Bank ───────────────────────────
   const trf1 = await createPostedInternalTransfer({
     tenantId: T, userId: owner.id,
     fromAccountId: accounts[0].id,
@@ -515,7 +512,6 @@ async function seed() {
   });
   console.log(`  ✓ TRF #1: ${trf1.documentNumber} — PKR 200,000 Cash → HBL Bank`);
 
-  // ── 6.21 INTERNAL TRANSFER: HBL → JazzCash ────────────────────────────
   const trf2 = await createPostedInternalTransfer({
     tenantId: T, userId: admin.id,
     fromAccountId: accounts[1].id,
@@ -526,7 +522,6 @@ async function seed() {
   });
   console.log(`  ✓ TRF #2: ${trf2.documentNumber} — PKR 30,000 HBL → JazzCash`);
 
-  // ── 6.22 STOCK ADJUSTMENT: IN (found extra inventory) ─────────────────
   const adj1 = await createPostedAdjustment({
     tenantId: T, userId: owner.id,
     transactionDate: '2026-02-13',
@@ -538,7 +533,6 @@ async function seed() {
   });
   console.log(`  ✓ ADJ #1: ${adj1.documentNumber} — Stock IN (shirts found during count)`);
 
-  // ── 6.23 STOCK ADJUSTMENT: OUT (damaged goods) ────────────────────────
   const adj2 = await createPostedAdjustment({
     tenantId: T, userId: owner.id,
     transactionDate: '2026-02-18',
@@ -551,69 +545,26 @@ async function seed() {
   console.log(`  ✓ ADJ #2: ${adj2.documentNumber} — Stock OUT (damaged goods)`);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // 7. IMPORT BATCHES + ROWS (screens 37-41 coverage)
+  // 7. IMPORT BATCHES + ROWS
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('\n─── Creating import history ───');
 
-  // Records that simulate successful imports (kept dependency-free for rollback testing)
   const importedSupplierA = await prisma.supplier.create({
-    data: {
-      tenantId: T,
-      name: 'Imported Supplier Alpha',
-      phone: '+92-300-9000101',
-      address: 'Import Lane, Karachi',
-      notes: 'Created via simulated import',
-      createdBy: admin.id,
-    },
+    data: { tenantId: T, name: 'Imported Supplier Alpha', phone: '+92-300-9000101', address: 'Import Lane, Karachi', notes: 'Created via simulated import', createdBy: admin.id },
   });
   const importedSupplierB = await prisma.supplier.create({
-    data: {
-      tenantId: T,
-      name: 'Imported Supplier Beta',
-      phone: '+92-300-9000102',
-      address: 'Import Lane, Lahore',
-      notes: 'Created via simulated import',
-      createdBy: admin.id,
-    },
+    data: { tenantId: T, name: 'Imported Supplier Beta', phone: '+92-300-9000102', address: 'Import Lane, Lahore', notes: 'Created via simulated import', createdBy: admin.id },
   });
 
   const importedProductA = await prisma.product.create({
-    data: {
-      tenantId: T,
-      name: 'Imported Cufflinks - Silver',
-      sku: 'IMP-CUFF-SLV',
-      category: 'Accessories',
-      unit: 'piece',
-      createdBy: admin.id,
-      variants: { create: [{ tenantId: T, size: 'one-size', createdBy: admin.id }] },
-    },
+    data: { tenantId: T, name: 'Imported Cufflinks - Silver', sku: 'IMP-CUFF-SLV', category: 'Accessories', unit: 'piece', createdBy: admin.id, variants: { create: [{ tenantId: T, size: 'one-size', createdBy: admin.id }] } },
   });
   const importedProductB = await prisma.product.create({
-    data: {
-      tenantId: T,
-      name: 'Imported Pocket Square - Navy',
-      sku: 'IMP-PSQ-NAV',
-      category: 'Accessories',
-      unit: 'piece',
-      createdBy: admin.id,
-      variants: { create: [{ tenantId: T, size: 'one-size', createdBy: admin.id }] },
-    },
+    data: { tenantId: T, name: 'Imported Pocket Square - Navy', sku: 'IMP-PSQ-NAV', category: 'Accessories', unit: 'piece', createdBy: admin.id, variants: { create: [{ tenantId: T, size: 'one-size', createdBy: admin.id }] } },
   });
 
   const importPendingBatch = await prisma.importBatch.create({
-    data: {
-      tenantId: T,
-      sourceType: 'CSV',
-      module: 'SUPPLIERS',
-      fileName: 'suppliers-pending.csv',
-      status: 'PENDING_MAPPING',
-      totalRows: 3,
-      successRows: 0,
-      failedRows: 0,
-      createdBy: admin.id,
-      createdAt: dateTime('2026-02-12T08:15:00.000Z'),
-      updatedAt: dateTime('2026-02-12T08:15:00.000Z'),
-    },
+    data: { tenantId: T, sourceType: 'CSV', module: 'SUPPLIERS', fileName: 'suppliers-pending.csv', status: 'PENDING_MAPPING', totalRows: 3, successRows: 0, failedRows: 0, createdBy: admin.id, createdAt: dateTime('2026-02-12T08:15:00.000Z'), updatedAt: dateTime('2026-02-12T08:15:00.000Z') },
   });
   await prisma.importRow.createMany({
     data: [
@@ -624,19 +575,7 @@ async function seed() {
   });
 
   const importValidatedBatch = await prisma.importBatch.create({
-    data: {
-      tenantId: T,
-      sourceType: 'EXCEL',
-      module: 'CUSTOMERS',
-      fileName: 'customers-validated.xlsx',
-      status: 'VALIDATED',
-      totalRows: 4,
-      successRows: 0,
-      failedRows: 0,
-      createdBy: owner.id,
-      createdAt: dateTime('2026-02-13T09:10:00.000Z'),
-      updatedAt: dateTime('2026-02-13T09:25:00.000Z'),
-    },
+    data: { tenantId: T, sourceType: 'EXCEL', module: 'CUSTOMERS', fileName: 'customers-validated.xlsx', status: 'VALIDATED', totalRows: 4, successRows: 0, failedRows: 0, createdBy: owner.id, createdAt: dateTime('2026-02-13T09:10:00.000Z'), updatedAt: dateTime('2026-02-13T09:25:00.000Z') },
   });
   await prisma.importRow.createMany({
     data: [
@@ -648,120 +587,33 @@ async function seed() {
   });
 
   const importCompletedBatch = await prisma.importBatch.create({
-    data: {
-      tenantId: T,
-      sourceType: 'CSV',
-      module: 'PRODUCTS',
-      fileName: 'products-completed.csv',
-      status: 'COMPLETED',
-      totalRows: 3,
-      successRows: 2,
-      failedRows: 1,
-      createdBy: admin.id,
-      createdAt: dateTime('2026-02-14T10:40:00.000Z'),
-      updatedAt: dateTime('2026-02-14T11:05:00.000Z'),
-    },
+    data: { tenantId: T, sourceType: 'CSV', module: 'PRODUCTS', fileName: 'products-completed.csv', status: 'COMPLETED', totalRows: 3, successRows: 2, failedRows: 1, createdBy: admin.id, createdAt: dateTime('2026-02-14T10:40:00.000Z'), updatedAt: dateTime('2026-02-14T11:05:00.000Z') },
   });
   await prisma.importRow.createMany({
     data: [
-      {
-        tenantId: T,
-        importBatchId: importCompletedBatch.id,
-        rowNumber: 1,
-        rawDataJson: { name: 'Imported Cufflinks - Silver', sku: 'IMP-CUFF-SLV', category: 'Accessories', unit: 'piece' },
-        status: 'SUCCESS',
-        createdRecordType: 'PRODUCT',
-        createdRecordId: importedProductA.id,
-      },
-      {
-        tenantId: T,
-        importBatchId: importCompletedBatch.id,
-        rowNumber: 2,
-        rawDataJson: { name: 'Imported Duplicate SKU', sku: 'SUIT-BLK', category: 'Accessories', unit: 'piece' },
-        status: 'FAILED',
-        errorMessage: 'Duplicate SKU',
-      },
-      {
-        tenantId: T,
-        importBatchId: importCompletedBatch.id,
-        rowNumber: 3,
-        rawDataJson: { name: 'Imported Pocket Square - Navy', sku: 'IMP-PSQ-NAV', category: 'Accessories', unit: 'piece' },
-        status: 'SUCCESS',
-        createdRecordType: 'PRODUCT',
-        createdRecordId: importedProductB.id,
-      },
+      { tenantId: T, importBatchId: importCompletedBatch.id, rowNumber: 1, rawDataJson: { name: 'Imported Cufflinks - Silver', sku: 'IMP-CUFF-SLV', category: 'Accessories', unit: 'piece' }, status: 'SUCCESS', createdRecordType: 'PRODUCT', createdRecordId: importedProductA.id },
+      { tenantId: T, importBatchId: importCompletedBatch.id, rowNumber: 2, rawDataJson: { name: 'Imported Duplicate SKU', sku: 'SUIT-BLK', category: 'Accessories', unit: 'piece' }, status: 'FAILED', errorMessage: 'Duplicate SKU' },
+      { tenantId: T, importBatchId: importCompletedBatch.id, rowNumber: 3, rawDataJson: { name: 'Imported Pocket Square - Navy', sku: 'IMP-PSQ-NAV', category: 'Accessories', unit: 'piece' }, status: 'SUCCESS', createdRecordType: 'PRODUCT', createdRecordId: importedProductB.id },
     ],
   });
 
   const importRollbackReadyBatch = await prisma.importBatch.create({
-    data: {
-      tenantId: T,
-      sourceType: 'CSV',
-      module: 'SUPPLIERS',
-      fileName: 'suppliers-rollback-ready.csv',
-      status: 'COMPLETED',
-      totalRows: 2,
-      successRows: 2,
-      failedRows: 0,
-      createdBy: owner.id,
-      createdAt: dateTime('2026-02-15T07:20:00.000Z'),
-      updatedAt: dateTime('2026-02-15T07:28:00.000Z'),
-    },
+    data: { tenantId: T, sourceType: 'CSV', module: 'SUPPLIERS', fileName: 'suppliers-rollback-ready.csv', status: 'COMPLETED', totalRows: 2, successRows: 2, failedRows: 0, createdBy: owner.id, createdAt: dateTime('2026-02-15T07:20:00.000Z'), updatedAt: dateTime('2026-02-15T07:28:00.000Z') },
   });
   await prisma.importRow.createMany({
     data: [
-      {
-        tenantId: T,
-        importBatchId: importRollbackReadyBatch.id,
-        rowNumber: 1,
-        rawDataJson: { name: 'Imported Supplier Alpha', phone: '+92-300-9000101' },
-        status: 'SUCCESS',
-        createdRecordType: 'SUPPLIER',
-        createdRecordId: importedSupplierA.id,
-      },
-      {
-        tenantId: T,
-        importBatchId: importRollbackReadyBatch.id,
-        rowNumber: 2,
-        rawDataJson: { name: 'Imported Supplier Beta', phone: '+92-300-9000102' },
-        status: 'SUCCESS',
-        createdRecordType: 'SUPPLIER',
-        createdRecordId: importedSupplierB.id,
-      },
+      { tenantId: T, importBatchId: importRollbackReadyBatch.id, rowNumber: 1, rawDataJson: { name: 'Imported Supplier Alpha', phone: '+92-300-9000101' }, status: 'SUCCESS', createdRecordType: 'SUPPLIER', createdRecordId: importedSupplierA.id },
+      { tenantId: T, importBatchId: importRollbackReadyBatch.id, rowNumber: 2, rawDataJson: { name: 'Imported Supplier Beta', phone: '+92-300-9000102' }, status: 'SUCCESS', createdRecordType: 'SUPPLIER', createdRecordId: importedSupplierB.id },
     ],
   });
 
   const importRolledBackBatch = await prisma.importBatch.create({
-    data: {
-      tenantId: T,
-      sourceType: 'EXCEL',
-      module: 'OPENING_BALANCES',
-      fileName: 'opening-balances-rolled-back.xlsx',
-      status: 'ROLLED_BACK',
-      totalRows: 2,
-      successRows: 2,
-      failedRows: 0,
-      createdBy: owner.id,
-      createdAt: dateTime('2026-02-16T06:30:00.000Z'),
-      updatedAt: dateTime('2026-02-16T06:45:00.000Z'),
-    },
+    data: { tenantId: T, sourceType: 'EXCEL', module: 'OPENING_BALANCES', fileName: 'opening-balances-rolled-back.xlsx', status: 'ROLLED_BACK', totalRows: 2, successRows: 2, failedRows: 0, createdBy: owner.id, createdAt: dateTime('2026-02-16T06:30:00.000Z'), updatedAt: dateTime('2026-02-16T06:45:00.000Z') },
   });
   await prisma.importRow.createMany({
     data: [
-      {
-        tenantId: T,
-        importBatchId: importRolledBackBatch.id,
-        rowNumber: 1,
-        rawDataJson: { accountName: 'Main Cash', amount: '450000', previousOpeningBalance: 500000 },
-        status: 'VALID',
-      },
-      {
-        tenantId: T,
-        importBatchId: importRolledBackBatch.id,
-        rowNumber: 2,
-        rawDataJson: { accountName: 'HBL Business', amount: '1800000', previousOpeningBalance: 2000000 },
-        status: 'VALID',
-      },
+      { tenantId: T, importBatchId: importRolledBackBatch.id, rowNumber: 1, rawDataJson: { accountName: 'Main Cash', amount: '450000', previousOpeningBalance: 500000 }, status: 'VALID' },
+      { tenantId: T, importBatchId: importRolledBackBatch.id, rowNumber: 2, rawDataJson: { accountName: 'HBL Business', amount: '1800000', previousOpeningBalance: 2000000 }, status: 'VALID' },
     ],
   });
   console.log('  ✓ Imports: 5 batches seeded (PENDING_MAPPING, VALIDATED, COMPLETED, ROLLED_BACK + rollback-ready)');
@@ -812,7 +664,7 @@ async function seed() {
   console.log('\n✅ Seed complete!\n');
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // HELPER FUNCTIONS — Simulate what the PostingService does
+  // HELPER FUNCTIONS
   // ═══════════════════════════════════════════════════════════════════════════
 
   interface PurchaseLine { variantId: string; qty: number; unitCost: number; discount: number }
@@ -855,12 +707,14 @@ async function seed() {
     const subtotal = p.lines.reduce((s, l) => s + (l.qty * l.unitCost - l.discount), 0);
     const discountTotal = p.lines.reduce((s, l) => s + l.discount, 0);
     const totalAmount = subtotal + p.deliveryFee;
-    const docNumber = nextDocNumber('PURCHASE');
+    // FIX: use transaction date year for document number
+    const docNumber = nextDocNumber('PURCHASE', p.transactionDate);
 
     const txn = await prisma.transaction.create({
       data: {
         tenantId: p.tenantId, type: 'PURCHASE', status: 'POSTED',
-        series: '2026', documentNumber: docNumber,
+        series: String(new Date(p.transactionDate + 'T00:00:00Z').getUTCFullYear()),
+        documentNumber: docNumber,
         transactionDate: date(p.transactionDate), postedAt: new Date(),
         supplierId: p.supplierId, createdBy: p.userId,
         subtotal, discountTotal, deliveryFee: p.deliveryFee, totalAmount, paidNow,
@@ -877,20 +731,23 @@ async function seed() {
       },
     });
 
-    // Inventory movements (PURCHASE_IN)
+    // FIX: fetch line IDs to link transactionLineId on inventory movements
+    const createdLines = await prisma.transactionLine.findMany({ where: { transactionId: txn.id } });
+    const lineIdMap = new Map(createdLines.map((l) => [l.variantId, l.id]));
+
     for (const l of p.lines) {
       await prisma.inventoryMovement.create({
         data: {
-          tenantId: p.tenantId, transactionId: txn.id, variantId: l.variantId,
+          tenantId: p.tenantId, transactionId: txn.id,
+          transactionLineId: lineIdMap.get(l.variantId),  // FIX: include transactionLineId
+          variantId: l.variantId,
           movementType: 'PURCHASE_IN', quantity: l.qty, unitCostAtTime: l.unitCost,
           transactionDate: date(p.transactionDate), createdBy: p.userId,
         },
       });
-      // Update avgCost on variant
       await updateAvgCost(p.tenantId, l.variantId);
     }
 
-    // Ledger entry (AP_INCREASE)
     await prisma.ledgerEntry.create({
       data: {
         tenantId: p.tenantId, transactionId: txn.id, entryType: 'AP_INCREASE',
@@ -899,7 +756,6 @@ async function seed() {
       },
     });
 
-    // Payment entry if paidNow > 0
     if (paidNow > 0 && p.paymentAccountId) {
       await prisma.paymentEntry.create({
         data: {
@@ -968,12 +824,14 @@ async function seed() {
     const subtotal = p.lines.reduce((s, l) => s + (l.qty * l.unitPrice - l.discount), 0);
     const discountTotal = p.lines.reduce((s, l) => s + l.discount, 0);
     const totalAmount = subtotal + p.deliveryFee;
-    const docNumber = nextDocNumber('SALE');
+    // FIX: use transaction date year
+    const docNumber = nextDocNumber('SALE', p.transactionDate);
 
     const txn = await prisma.transaction.create({
       data: {
         tenantId: p.tenantId, type: 'SALE', status: 'POSTED',
-        series: '2026', documentNumber: docNumber,
+        series: String(new Date(p.transactionDate + 'T00:00:00Z').getUTCFullYear()),
+        documentNumber: docNumber,
         transactionDate: date(p.transactionDate), postedAt: new Date(),
         customerId: p.customerId, createdBy: p.userId,
         subtotal, discountTotal, deliveryFee: p.deliveryFee, totalAmount, paidNow: receivedNow,
@@ -990,7 +848,10 @@ async function seed() {
       },
     });
 
-    // Inventory movements (SALE_OUT)
+    // FIX: fetch line IDs to link transactionLineId on inventory movements
+    const createdLines = await prisma.transactionLine.findMany({ where: { transactionId: txn.id } });
+    const lineIdMap = new Map(createdLines.map((l) => [l.variantId, l.id]));
+
     for (const l of p.lines) {
       const variant = await prisma.productVariant.findUnique({
         where: { id: l.variantId },
@@ -998,14 +859,15 @@ async function seed() {
       });
       await prisma.inventoryMovement.create({
         data: {
-          tenantId: p.tenantId, transactionId: txn.id, variantId: l.variantId,
+          tenantId: p.tenantId, transactionId: txn.id,
+          transactionLineId: lineIdMap.get(l.variantId),  // FIX: include transactionLineId
+          variantId: l.variantId,
           movementType: 'SALE_OUT', quantity: l.qty, unitCostAtTime: variant?.avgCost ?? 0,
           transactionDate: date(p.transactionDate), createdBy: p.userId,
         },
       });
     }
 
-    // Ledger entry (AR_INCREASE)
     await prisma.ledgerEntry.create({
       data: {
         tenantId: p.tenantId, transactionId: txn.id, entryType: 'AR_INCREASE',
@@ -1014,7 +876,6 @@ async function seed() {
       },
     });
 
-    // Payment if receivedNow > 0
     if (receivedNow > 0 && p.paymentAccountId) {
       await prisma.paymentEntry.create({
         data: {
@@ -1051,11 +912,12 @@ async function seed() {
     paymentAccountId: string; transactionDate: string;
     allocateToTransactionId?: string; notes?: string;
   }) {
-    const docNumber = nextDocNumber('SUPPLIER_PAYMENT');
+    const docNumber = nextDocNumber('SUPPLIER_PAYMENT', p.transactionDate);
     const txn = await prisma.transaction.create({
       data: {
         tenantId: p.tenantId, type: 'SUPPLIER_PAYMENT', status: 'POSTED',
-        series: '2026', documentNumber: docNumber,
+        series: String(new Date(p.transactionDate + 'T00:00:00Z').getUTCFullYear()),
+        documentNumber: docNumber,
         transactionDate: date(p.transactionDate), postedAt: new Date(),
         supplierId: p.supplierId, createdBy: p.userId,
         totalAmount: p.amount, subtotal: p.amount,
@@ -1064,7 +926,6 @@ async function seed() {
       },
     });
 
-    // Ledger: AP_DECREASE
     await prisma.ledgerEntry.create({
       data: {
         tenantId: p.tenantId, transactionId: txn.id, entryType: 'AP_DECREASE',
@@ -1073,7 +934,6 @@ async function seed() {
       },
     });
 
-    // Payment entry: MONEY_OUT
     await prisma.paymentEntry.create({
       data: {
         tenantId: p.tenantId, transactionId: txn.id,
@@ -1084,7 +944,6 @@ async function seed() {
       },
     });
 
-    // Allocation
     if (p.allocateToTransactionId) {
       await prisma.allocation.create({
         data: {
@@ -1105,11 +964,12 @@ async function seed() {
     paymentAccountId: string; transactionDate: string;
     allocateToTransactionId?: string; notes?: string;
   }) {
-    const docNumber = nextDocNumber('CUSTOMER_PAYMENT');
+    const docNumber = nextDocNumber('CUSTOMER_PAYMENT', p.transactionDate);
     const txn = await prisma.transaction.create({
       data: {
         tenantId: p.tenantId, type: 'CUSTOMER_PAYMENT', status: 'POSTED',
-        series: '2026', documentNumber: docNumber,
+        series: String(new Date(p.transactionDate + 'T00:00:00Z').getUTCFullYear()),
+        documentNumber: docNumber,
         transactionDate: date(p.transactionDate), postedAt: new Date(),
         customerId: p.customerId, createdBy: p.userId,
         totalAmount: p.amount, subtotal: p.amount,
@@ -1118,7 +978,6 @@ async function seed() {
       },
     });
 
-    // Ledger: AR_DECREASE
     await prisma.ledgerEntry.create({
       data: {
         tenantId: p.tenantId, transactionId: txn.id, entryType: 'AR_DECREASE',
@@ -1127,7 +986,6 @@ async function seed() {
       },
     });
 
-    // Payment entry: MONEY_IN
     await prisma.paymentEntry.create({
       data: {
         tenantId: p.tenantId, transactionId: txn.id,
@@ -1138,7 +996,6 @@ async function seed() {
       },
     });
 
-    // Allocation
     if (p.allocateToTransactionId) {
       await prisma.allocation.create({
         data: {
@@ -1160,12 +1017,13 @@ async function seed() {
     notes?: string;
   }) {
     const totalAmount = p.lines.reduce((s, l) => s + l.qty * l.unitCost, 0);
-    const docNumber = nextDocNumber('SUPPLIER_RETURN');
+    const docNumber = nextDocNumber('SUPPLIER_RETURN', p.transactionDate);
 
     const txn = await prisma.transaction.create({
       data: {
         tenantId: p.tenantId, type: 'SUPPLIER_RETURN', status: 'POSTED',
-        series: '2026', documentNumber: docNumber,
+        series: String(new Date(p.transactionDate + 'T00:00:00Z').getUTCFullYear()),
+        documentNumber: docNumber,
         transactionDate: date(p.transactionDate), postedAt: new Date(),
         supplierId: p.supplierId, createdBy: p.userId,
         totalAmount, subtotal: totalAmount,
@@ -1181,11 +1039,16 @@ async function seed() {
       },
     });
 
-    // Inventory: SUPPLIER_RETURN_OUT
+    // FIX: fetch line IDs to link transactionLineId on inventory movements
+    const createdLines = await prisma.transactionLine.findMany({ where: { transactionId: txn.id } });
+    const lineIdMap = new Map(createdLines.map((l) => [l.variantId, l.id]));
+
     for (const l of p.lines) {
       await prisma.inventoryMovement.create({
         data: {
-          tenantId: p.tenantId, transactionId: txn.id, variantId: l.variantId,
+          tenantId: p.tenantId, transactionId: txn.id,
+          transactionLineId: lineIdMap.get(l.variantId),  // FIX: include transactionLineId
+          variantId: l.variantId,
           movementType: 'SUPPLIER_RETURN_OUT', quantity: l.qty, unitCostAtTime: l.unitCost,
           transactionDate: date(p.transactionDate), createdBy: p.userId,
         },
@@ -1193,7 +1056,6 @@ async function seed() {
       await updateAvgCost(p.tenantId, l.variantId);
     }
 
-    // Ledger: AP_DECREASE
     await prisma.ledgerEntry.create({
       data: {
         tenantId: p.tenantId, transactionId: txn.id, entryType: 'AP_DECREASE',
@@ -1207,25 +1069,37 @@ async function seed() {
 
   async function createPostedCustomerReturn(p: {
     tenantId: string; userId: string; customerId: string; transactionDate: string;
-    lines: Array<{ sourceTransactionLineId: string; variantId: string; qty: number; unitPrice: number }>;
+    lines: Array<{ sourceTransactionLineId: string; variantId: string; qty: number }>;
     returnHandling: 'STORE_CREDIT' | 'REFUND_NOW';
     paymentAccountId?: string; notes?: string;
   }) {
-    const totalAmount = p.lines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
-    const docNumber = nextDocNumber('CUSTOMER_RETURN');
+    const docNumber = nextDocNumber('CUSTOMER_RETURN', p.transactionDate);
+
+    // FIX: fetch variant avgCost for each return line (use cost, not selling price)
+    const lineData = await Promise.all(p.lines.map(async (l) => {
+      const variant = await prisma.productVariant.findUnique({
+        where: { id: l.variantId },
+        select: { avgCost: true },
+      });
+      const unitCostAtTime = variant?.avgCost ?? 0;
+      return { ...l, unitCostAtTime, lineTotal: l.qty * unitCostAtTime };
+    }));
+
+    const totalAmount = lineData.reduce((s, l) => s + l.lineTotal, 0);
 
     const txn = await prisma.transaction.create({
       data: {
         tenantId: p.tenantId, type: 'CUSTOMER_RETURN', status: 'POSTED',
-        series: '2026', documentNumber: docNumber,
+        series: String(new Date(p.transactionDate + 'T00:00:00Z').getUTCFullYear()),
+        documentNumber: docNumber,
         transactionDate: date(p.transactionDate), postedAt: new Date(),
         customerId: p.customerId, createdBy: p.userId,
         totalAmount, subtotal: totalAmount,
         notes: p.notes, idempotencyKey: randomUUID(),
         transactionLines: {
-          create: p.lines.map((l) => ({
+          create: lineData.map((l) => ({
             tenantId: p.tenantId, variantId: l.variantId, quantity: l.qty,
-            unitPrice: l.unitPrice, lineTotal: l.qty * l.unitPrice, costTotal: l.qty * l.unitPrice,
+            lineTotal: l.lineTotal, costTotal: l.lineTotal,
             sourceTransactionLineId: l.sourceTransactionLineId,
             createdBy: p.userId,
           })),
@@ -1233,18 +1107,23 @@ async function seed() {
       },
     });
 
-    // Inventory: CUSTOMER_RETURN_IN
-    for (const l of p.lines) {
+    // FIX: fetch line IDs to link transactionLineId on inventory movements
+    const createdLines = await prisma.transactionLine.findMany({ where: { transactionId: txn.id } });
+    const lineIdMap = new Map(createdLines.map((l) => [l.variantId, l.id]));
+
+    for (const l of lineData) {
       await prisma.inventoryMovement.create({
         data: {
-          tenantId: p.tenantId, transactionId: txn.id, variantId: l.variantId,
-          movementType: 'CUSTOMER_RETURN_IN', quantity: l.qty, unitCostAtTime: l.unitPrice,
+          tenantId: p.tenantId, transactionId: txn.id,
+          transactionLineId: lineIdMap.get(l.variantId),  // FIX: include transactionLineId
+          variantId: l.variantId,
+          movementType: 'CUSTOMER_RETURN_IN', quantity: l.qty,
+          unitCostAtTime: l.unitCostAtTime,  // FIX: use avgCost, not selling price
           transactionDate: date(p.transactionDate), createdBy: p.userId,
         },
       });
     }
 
-    // Ledger: AR_DECREASE
     await prisma.ledgerEntry.create({
       data: {
         tenantId: p.tenantId, transactionId: txn.id, entryType: 'AR_DECREASE',
@@ -1253,6 +1132,18 @@ async function seed() {
       },
     });
 
+    if (p.returnHandling === 'REFUND_NOW' && p.paymentAccountId) {
+      await prisma.paymentEntry.create({
+        data: {
+          tenantId: p.tenantId, transactionId: txn.id,
+          paymentAccountId: p.paymentAccountId,
+          entryType: 'MONEY_OUT', direction: 'OUT', amount: totalAmount,
+          customerId: p.customerId,
+          transactionDate: date(p.transactionDate), createdBy: p.userId,
+        },
+      });
+    }
+
     return { ...txn, documentNumber: docNumber };
   }
 
@@ -1260,13 +1151,14 @@ async function seed() {
     tenantId: string; userId: string; fromAccountId: string; toAccountId: string;
     amount: number; transactionDate: string; notes?: string;
   }) {
-    const docNumber = nextDocNumber('INTERNAL_TRANSFER');
+    const docNumber = nextDocNumber('INTERNAL_TRANSFER', p.transactionDate);
     const groupId = randomUUID();
 
     const txn = await prisma.transaction.create({
       data: {
         tenantId: p.tenantId, type: 'INTERNAL_TRANSFER', status: 'POSTED',
-        series: '2026', documentNumber: docNumber,
+        series: String(new Date(p.transactionDate + 'T00:00:00Z').getUTCFullYear()),
+        documentNumber: docNumber,
         transactionDate: date(p.transactionDate), postedAt: new Date(),
         createdBy: p.userId, totalAmount: p.amount, subtotal: p.amount,
         fromPaymentAccountId: p.fromAccountId, toPaymentAccountId: p.toAccountId,
@@ -1274,12 +1166,11 @@ async function seed() {
       },
     });
 
-    // Two payment entries linked by transferGroupId
     await prisma.paymentEntry.create({
       data: {
         tenantId: p.tenantId, transactionId: txn.id,
         paymentAccountId: p.fromAccountId,
-        entryType: 'TRANSFER', direction: 'OUT', amount: p.amount,
+        entryType: 'MONEY_OUT', direction: 'OUT', amount: p.amount,
         transferGroupId: groupId,
         transactionDate: date(p.transactionDate), createdBy: p.userId,
       },
@@ -1288,7 +1179,7 @@ async function seed() {
       data: {
         tenantId: p.tenantId, transactionId: txn.id,
         paymentAccountId: p.toAccountId,
-        entryType: 'TRANSFER', direction: 'IN', amount: p.amount,
+        entryType: 'MONEY_IN', direction: 'IN', amount: p.amount,
         transferGroupId: groupId,
         transactionDate: date(p.transactionDate), createdBy: p.userId,
       },
@@ -1302,12 +1193,13 @@ async function seed() {
     lines: Array<{ variantId: string; qty: number; direction: 'IN' | 'OUT'; reason: string }>;
     notes?: string;
   }) {
-    const docNumber = nextDocNumber('ADJUSTMENT');
+    const docNumber = nextDocNumber('ADJUSTMENT', p.transactionDate);
 
     const txn = await prisma.transaction.create({
       data: {
         tenantId: p.tenantId, type: 'ADJUSTMENT', status: 'POSTED',
-        series: '2026', documentNumber: docNumber,
+        series: String(new Date(p.transactionDate + 'T00:00:00Z').getUTCFullYear()),
+        documentNumber: docNumber,
         transactionDate: date(p.transactionDate), postedAt: new Date(),
         createdBy: p.userId, totalAmount: 0, subtotal: 0,
         notes: p.notes, idempotencyKey: randomUUID(),
@@ -1321,12 +1213,17 @@ async function seed() {
       },
     });
 
-    // Inventory movements
+    // FIX: fetch line IDs to link transactionLineId on inventory movements
+    const createdLines = await prisma.transactionLine.findMany({ where: { transactionId: txn.id } });
+    const lineIdMap = new Map(createdLines.map((l) => [l.variantId, l.id]));
+
     for (const l of p.lines) {
       const movementType = l.direction === 'IN' ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT';
       await prisma.inventoryMovement.create({
         data: {
-          tenantId: p.tenantId, transactionId: txn.id, variantId: l.variantId,
+          tenantId: p.tenantId, transactionId: txn.id,
+          transactionLineId: lineIdMap.get(l.variantId),  // FIX: include transactionLineId
+          variantId: l.variantId,
           movementType: movementType as any, quantity: l.qty, unitCostAtTime: 0,
           transactionDate: date(p.transactionDate), createdBy: p.userId,
         },
@@ -1348,7 +1245,8 @@ async function seed() {
     `;
     const netCost = Number(result[0]?.net_cost ?? 0);
     const netQty = Number(result[0]?.net_qty ?? 0);
-    const avgCost = netQty > 0 ? Math.floor(netCost / netQty) : 0;
+    // FIX: use Math.round to match posting engine (was Math.floor)
+    const avgCost = netQty > 0 ? Math.round(netCost / netQty) : 0;
     await prisma.productVariant.update({ where: { id: variantId }, data: { avgCost } });
   }
 }

@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { getContext } from '../common/request-context';
 import { PostTransactionDto } from './dto/post-transaction.dto';
 import { PaymentAllocationItemDto } from './dto/payment-allocation-item.dto';
+import { calculateWeightedAvgCost, calculateReturnAvgCost } from './posting-calculations';
 
 @Injectable()
 export class PostingService {
@@ -186,16 +187,7 @@ export class PostingService {
     // 5. Update avgCost for each variant using pre-movement stock
     for (const line of txn.transactionLines) {
       const preStock = preStocks.get(line.variantId) ?? 0;
-      const oldAvg = line.variant.avgCost;
-      const qty = line.quantity;
-      const unitCost = line.unitCost;
-
-      const newAvg =
-        preStock + qty === 0
-          ? unitCost
-          : Math.round(
-              (preStock * oldAvg + qty * unitCost) / (preStock + qty),
-            );
+      const newAvg = calculateWeightedAvgCost(preStock, line.variant.avgCost, line.quantity, line.unitCost);
 
       await tx.productVariant.update({
         where: { id: line.variantId },
@@ -764,15 +756,7 @@ export class PostingService {
       // preStock already includes the CUSTOMER_RETURN_IN we just created (visible in same tx)
       // so subtract our new qty to get the pre-return stock
       const stockBeforeReturn = preStock - line.quantity;
-      const oldAvg = line.variant.avgCost;
-      const qty = line.quantity;
-
-      const newAvg =
-        stockBeforeReturn + qty === 0
-          ? oldAvg
-          : Math.round(
-              (stockBeforeReturn * oldAvg + qty * oldAvg) / (stockBeforeReturn + qty),
-            );
+      const newAvg = calculateReturnAvgCost(stockBeforeReturn, line.variant.avgCost, line.quantity);
 
       await tx.productVariant.update({
         where: { id: line.variantId },
